@@ -23,7 +23,8 @@ probe → CFR normalization → scene-cut detection
 - GPU: RTX 3090 24GB, compute capability 8.6
 - 런타임: WSL2 Ubuntu 24.04, Python 3.12.3
 - 현재 Python 환경: PyTorch/OpenCV/Hydra/Pydantic 미설치
-- D: 잔여 공간: 약 223GB
+- WSL 내부 잔여 공간: 약 435GB
+- D: 잔여 공간: 약 436GB
 
 ## 3. 강제 불변식
 
@@ -37,6 +38,8 @@ probe → CFR normalization → scene-cut detection
 8. OOM, NaN/Inf, 체크포인트 불일치, 프레임 누락, 색상 메타데이터 불일치는 경고로 무마하지 않고 실패시킵니다.
 9. 자동 tile 축소나 fallback은 manifest에 실제 적용값을 기록합니다. 기록 없는 silent fallback은 금지합니다.
 10. 전체 104개 처리는 대표 클립 smoke test와 예상 시간·출력 용량 보고가 통과하기 전 실행하지 않습니다.
+11. 최종 영상 경로는 `/mnt/d` 아래만 허용하고, 모델·checkpoint·중간 smoke artifact는 WSL
+    내부 `.runtime/`에 둡니다.
 
 ## 4. 처리 단계
 
@@ -163,8 +166,11 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 
 ## 9. 현재 상태
 
-- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 17개
+- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 56개
 - 완료: 공식 소스 기반 모델 shortlist와 라이선스/runtime 격리 정책
 - 완료: Pydantic/Hydra 제어 설정, backend protocol, RTX 3090/RIFE deterministic preflight
-- 진행: 고정 FFmpeg/ffprobe 기반 실제 영상 probe, CFR/scene-cut/chunking
-- 미실행: FlashVSR 환경과 checkpoint, 실제 영상 추론, 전체 batch 처리
+- 완료: FlashVSR v1.1 고정 환경, 4개 checkpoint digest, SM 8.6 sparse CUDA kernel 수치 smoke
+- 완료: FlashVSR synthetic 2회 byte repeatability 및 604×1080 실제 영상 21-frame smoke
+- 진행: 고정 FFmpeg/ffprobe 기반 CFR/scene-cut/chunking과 고해상도 VSR 전략
+- 차단: 1280×720 이상은 현재 single-pass RTX 3090 실측 한도를 초과하므로 자동 실행 금지
+- 미실행: spatial tile 품질 검증, 전체 batch 처리

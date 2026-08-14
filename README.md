@@ -2,8 +2,8 @@
 
 RTX 3090에서 실제 영상을 `FPS 보간 → Video Super Resolution` 순서로 처리하기 위한 fail-fast 파이프라인입니다.
 
-현재는 기반 계약, 모델 선정, 격리 worker protocol을 구현하는 단계입니다. 체크포인트 설치와
-RTX 3090 preflight 전이므로 아직 실제 영상 추론을 실행하지 않습니다.
+현재는 기반 계약, 모델 선정, 격리 worker protocol과 RTX 3090 모델 runtime을 구현하는
+단계입니다.
 
 ## 테스트
 
@@ -32,6 +32,27 @@ FFmpeg/ffprobe는 변경 가능한 `latest` URL을 사용하지 않고 고정 re
 
 ```bash
 scripts/bootstrap_ffmpeg.sh
+```
+
+FlashVSR v1.1의 고정 Python/CUDA 환경, 4개 checkpoint, source-built Block Sparse Attention을
+설치합니다. Bootstrap은 각 checkpoint의 크기와 SHA-256을 검증한 뒤 RTX 3090에서 BF16
+kernel 결과를 PyTorch SDPA reference와 비교합니다.
+
+```bash
+scripts/bootstrap_flashvsr.sh
+```
+
+실제 diffusion checkpoint까지 포함한 최소 21-frame 추론 smoke는 별도로 실행합니다.
+
+```bash
+PYTHONPATH=src .runtime/envs/flashvsr-v1.1/bin/python scripts/smoke_flashvsr.py
+```
+
+실제 MP4 해상도와 21-frame chunk의 VRAM 적합성은 다음처럼 별도 검증합니다.
+
+```bash
+PYTHONPATH=src .runtime/envs/flashvsr-v1.1/bin/python \
+  scripts/smoke_flashvsr_real.py --input /absolute/path/to/input.mp4 --output-scale 2
 ```
 
 상세 설계는 [DESIGN.md](DESIGN.md), 모델 근거는 [MODEL_SELECTION.md](MODEL_SELECTION.md)를

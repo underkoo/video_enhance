@@ -28,6 +28,7 @@ def make_payload(root: Path) -> dict[str, object]:
             "allow_restricted_license": False,
             "fp16": True,
             "gpu_index": 0,
+            "final_output_root": str(root.resolve()),
         },
     }
 
@@ -62,6 +63,14 @@ class PipelineConfigTest(unittest.TestCase):
             payload = make_payload(root)
             payload["output_dir"] = str((root / "input" / "enhanced").resolve())
             with self.assertRaisesRegex(ValidationError, "must not overlap"):
+                PipelineConfig.model_validate(payload)
+
+    def test_output_must_stay_under_configured_final_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            payload = make_payload(root)
+            payload["output_dir"] = str(root.parent / "outside-final-root")
+            with self.assertRaisesRegex(ValidationError, "final_output_root"):
                 PipelineConfig.model_validate(payload)
 
     def test_backend_capability_mismatch_fails_during_config_validation(self) -> None:

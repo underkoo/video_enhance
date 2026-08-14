@@ -11,9 +11,10 @@
 - 결정론적 VSR fallback: [MMagic RealBasicVSR](https://github.com/open-mmlab/mmagic)
 - 제외: [SeedVR2](https://github.com/ByteDance-Seed/SeedVR)는 공식 권장 VRAM이 24GB 단일 GPU 범위를 크게 넘습니다.
 
-`default.yaml`은 RIFE → FlashVSR를 요청하지만 FlashVSR의 block-sparse CUDA extension을
-RTX 3090에서 compile/smoke test하기 전에는 실제 추론을 허용하지 않습니다. preflight 실패 시
-자동 fallback하지 않고 실행을 실패시킵니다. 사용자가 `deterministic.yaml`을 명시했을 때만
+`default.yaml`은 RIFE → FlashVSR를 요청합니다. FlashVSR의 block-sparse CUDA extension은
+RTX 3090에서 compile 및 BF16 수치 smoke를 통과했습니다. 다만 single-pass 해상도는 실제로
+완주한 32-aligned 608×1088(661,504 source pixels) 이하만 허용합니다. preflight 실패 시 자동
+fallback하지 않고 실행을 실패시킵니다. 사용자가 `deterministic.yaml`을 명시했을 때만
 RealBasicVSR로 전환합니다.
 
 현재 Block-Sparse-Attention upstream commit `49d6c39e4dc0303442cda3bb758b3925d4399c49`의
@@ -61,11 +62,11 @@ FlashVSR v1.1의 네 weight는 Hugging Face revision
 
 ## 다음 검증 gate
 
-1. FlashVSR sparse CUDA extension을 SM 8.6 대상으로 compile-only 검사합니다.
-2. 16프레임 저해상도 synthetic clip으로 입출력 shape, NaN/Inf, 반복 결정성을 검사합니다.
-3. 실제 영상 3개 짧은 crop에서 RIFE/FlashVSR smoke test를 수행합니다.
+1. 1280×720 이상 입력을 위한 spatial tile의 overlap/blend 계약과 seam 검증을 구현합니다.
+2. 실제 영상 3개 짧은 crop에서 RIFE→FlashVSR 결합 smoke를 수행합니다.
+3. FlashVSR tile 근사와 RealBasicVSR baseline을 temporal metric 및 수동 artifact로 비교합니다.
 4. BiM-VFI는 제한 라이선스 opt-in을 받은 연구 preset에서만 RIFE와 A/B합니다.
-5. VFI→VSR와 VSR→VFI를 temporal metric 및 수동 artifact로 비교한 뒤 순서를 확정합니다.
+5. VFI→VSR와 VSR→VFI를 비교한 뒤 기본 순서를 확정합니다.
 
 ## 현재 preflight 결과
 
@@ -74,6 +75,16 @@ FlashVSR v1.1의 네 weight는 Hugging Face revision
 - synthetic moving-square: 입력 `(2,64,96,3)`에서 출력 `(4,64,96,3)` 및 terminal hold 확인
 - 독립 프로세스 2회 출력: byte-identical SHA-256
   `e510380db1b214f6cfef51383101e1e80465e365ed0829234d07ef4d4371ee12`
+- Block Sparse Attention BF16: `(256,4,64)` 출력, PyTorch SDPA 대비 최대 절대오차
+  `0.00097656`
+- FlashVSR synthetic: 입력 `(21,32,32,3)`, 최종 2× 출력 `(21,64,64,3)`, 독립 프로세스
+  2회 byte-identical SHA-256
+  `6446722914db04aedbe9e5e007c0a01d24dc9f0959f461b27dd2d5619287bf2b`
+- FlashVSR 실제 해상도: 입력 `(21,1080,604,3)`, 최종 2× 출력
+  `(21,2160,1208,3)`, SHA-256
+  `c2f5bfe971e69194c1cdaf068c03f8d90ffefbbb346db69749f767b9703b5804`
+- 실해상도 21-frame 처리 시간 약 13분, driver peak VRAM 약 24.26GB. DIT CPU offload가
+  없으면 TCDecoder에서 OOM 발생하므로 worker는 `num_persistent_param_in_dit=0`을 강제합니다.
 
 초기 FP16 smoke에서는 upstream `warplayer`의 cached sampling grid가 float32로 생성돼
 `grid_sample` dtype mismatch가 발생했습니다. 공식 wrapper가 global default Half tensor에 의존하는

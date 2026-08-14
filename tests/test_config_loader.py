@@ -20,6 +20,7 @@ class HydraConfigLoaderTest(unittest.TestCase):
             overrides = (
                 f"input_dir={input_directory}",
                 f"output_dir={root / 'output'}",
+                "runtime.final_output_root=null",
             )
             default_config = load_hydra_config(CONFIG_DIR, "default", overrides)
             deterministic_config = load_hydra_config(
@@ -41,6 +42,7 @@ class HydraConfigLoaderTest(unittest.TestCase):
             overrides = (
                 f"input_dir={input_directory}",
                 f"output_dir={root / 'output'}",
+                "runtime.final_output_root=null",
             )
             with self.assertRaisesRegex(ValidationError, "restricted license"):
                 load_hydra_config(CONFIG_DIR, "research_quality", overrides)

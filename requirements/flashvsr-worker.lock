@@ -1,0 +1,32 @@
+# FlashVSR는 제어 환경과 분리된 Python 3.11 worker에서만 사용합니다.
+# torch 계열은 bootstrap script가 공식 cu124 index에서 별도로 설치합니다.
+accelerate==1.8.1
+einops==0.8.1
+ftfy==6.3.1
+huggingface-hub==0.34.4
+imageio==2.37.0
+imageio-ffmpeg==0.6.0
+matplotlib==3.10.3
+modelscope==1.27.1
+ninja==1.13.0
+nvidia-cuda-cccl-cu12==12.4.127.post1
+numpy==1.26.4
+opencv-python-headless==4.11.0.86
+packaging==25.0
+pandas==2.3.0
+peft==0.16.0
+pillow==11.0.0
+protobuf==3.20.3
+psutil==7.0.0
+pytorch-lightning==2.5.2
+safetensors==0.5.3
+sentencepiece==0.2.0
+setuptools==80.9.0
+torch==2.6.0+cu124
+torchaudio==2.6.0+cu124
+torchmetrics==1.7.3
+torchsde==0.2.6
+torchvision==0.21.0+cu124
+tqdm==4.67.1
+transformers==4.46.2
+wheel==0.45.1

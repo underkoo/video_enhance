@@ -47,6 +47,18 @@ class RuntimeConfig(StrictConfigModel):
     fp16: bool = True
     gpu_index: Annotated[int, Field(ge=0)] = 0
     worker_timeout_seconds: Annotated[int, Field(ge=60)] = 3_600
+    final_output_root: Path | None = None
+
+    @field_validator("final_output_root", mode="after")
+    @classmethod
+    def validate_final_output_root(cls, value: Path | None) -> Path | None:
+        """설정된 경우 최종 산출물 root를 절대 경로로 고정합니다."""
+
+        if value is None:
+            return None
+        if not value.is_absolute():
+            raise ValueError("final_output_root must be absolute")
+        return value.resolve(strict=False)
 
 
 class PipelineConfig(StrictConfigModel):
@@ -87,6 +99,14 @@ class PipelineConfig(StrictConfigModel):
             or self.input_dir.is_relative_to(self.output_dir)
         ):
             raise ValueError("input_dir and output_dir must not overlap")
+        final_output_root = self.runtime.final_output_root
+        if final_output_root is not None and not (
+            self.output_dir == final_output_root
+            or self.output_dir.is_relative_to(final_output_root)
+        ):
+            raise ValueError(
+                f"output_dir must be under final_output_root: {final_output_root}"
+            )
 
         vfi_capabilities = get_backend_capabilities(self.vfi.backend_id)
         try:
