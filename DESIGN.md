@@ -47,6 +47,9 @@ probe → CFR normalization → scene-cut detection
 
 - codec, width, height, rational FPS, time base, frame count, duration, color metadata, audio stream을 수집합니다.
 - 컨테이너 FPS와 실제 PTS cadence가 일치하는지 검사합니다.
+- 재타이밍은 `setpts=PTS-STARTPTS` 뒤 정확한 `30/1`, `round=near`, `eof_action=pass`로 고정합니다.
+- 동일 FFmpeg filter를 null sink로 먼저 실행해 실제 input/output/drop/dup count를 확정한 뒤에만
+  RGB decode를 허용합니다.
 - CFR 정규화의 frame duplication/drop 내역을 manifest에 기록합니다.
 - 디코딩 색공간을 명시적으로 고정하고 최종 인코딩에서 원본 색상 메타데이터를 복원합니다.
 
@@ -170,12 +173,13 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 
 ## 9. 현재 상태
 
-- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 65개
+- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 69개
 - 완료: 공식 소스 기반 모델 shortlist와 라이선스/runtime 격리 정책
 - 완료: Pydantic/Hydra 제어 설정, backend protocol, RTX 3090/RIFE deterministic preflight
 - 완료: FlashVSR v1.1 고정 환경, 4개 checkpoint digest, SM 8.6 sparse CUDA kernel 수치 smoke
 - 완료: FlashVSR synthetic 2회 byte repeatability 및 604×1080 실제 영상 21-frame smoke
 - 완료: 고정 FFmpeg `scdet` strict parser, scene-safe 21-frame/5-context FlashVSR chunk planner
-- 진행: CFR decode/encode orchestration과 고해상도 VSR 전략
+- 완료: 30/1 CFR preflight 및 실제 6개 drift 영상의 strict drop/dup accounting
+- 진행: RGB frame streaming/encode orchestration과 고해상도 VSR 전략
 - 차단: 1280×720 이상은 현재 single-pass RTX 3090 실측 한도를 초과하므로 자동 실행 금지
 - 미실행: spatial tile 품질 검증, 전체 batch 처리

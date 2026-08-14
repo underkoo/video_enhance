@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from fractions import Fraction
 from pathlib import Path
 from typing import Annotated, Self
 
@@ -46,6 +47,12 @@ class SceneCutConfig(StrictConfigModel):
     threshold: Annotated[float, Field(gt=0.0, le=100.0)] = 27.0
 
 
+class CfrConfig(StrictConfigModel):
+    """모델 입력 전에 적용하는 정확한 CFR 목표 rate입니다."""
+
+    target_fps: Annotated[Fraction, Field(gt=0)] = Fraction(30, 1)
+
+
 class RuntimeConfig(StrictConfigModel):
     """GPU와 라이선스 실행 정책입니다."""
 
@@ -75,6 +82,7 @@ class PipelineConfig(StrictConfigModel):
     order: PipelineOrder = PipelineOrder.VFI_THEN_VSR
     vfi: VFIConfig
     vsr: VSRConfig
+    cfr: CfrConfig = CfrConfig()
     scene_cut: SceneCutConfig = SceneCutConfig()
     runtime: RuntimeConfig = RuntimeConfig()
 

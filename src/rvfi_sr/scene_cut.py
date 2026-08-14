@@ -7,7 +7,10 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
+
+from rvfi_sr.cfr import cfr_filter_expression
 
 _FRAME_PATTERN = re.compile(r"^frame:(\d+)\s+pts:")
 _SCORE_PREFIX = "lavfi.scd.score="
@@ -96,9 +99,10 @@ def detect_scene_cuts(
     input_path: Path,
     *,
     expected_frames: int,
+    target_fps: Fraction,
     threshold: float,
 ) -> SceneDetectionResult:
-    """모든 decoded frame의 pinned scdet score를 출력해 strict parser로 검증합니다."""
+    """CFR 재타이밍 뒤 모든 frame의 pinned scdet score를 엄격히 검증합니다."""
 
     if not isinstance(ffmpeg_path, Path) or not isinstance(input_path, Path):
         raise TypeError("ffmpeg_path and input_path must be pathlib.Path")
@@ -109,6 +113,10 @@ def detect_scene_cuts(
     if not resolved_input.is_file() or resolved_input.suffix.casefold() != ".mp4":
         raise ValueError("input_path must be an existing MP4 file")
     _validate_threshold(threshold)
+    filter_expression = (
+        f"{cfr_filter_expression(target_fps)},"
+        "scdet=threshold=100,metadata=mode=print:file=-"
+    )
 
     command = (
         str(executable),
@@ -123,7 +131,7 @@ def detect_scene_cuts(
         "-sn",
         "-dn",
         "-vf",
-        "scdet=threshold=100,metadata=mode=print:file=-",
+        filter_expression,
         "-f",
         "null",
         "-",

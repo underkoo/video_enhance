@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+from fractions import Fraction
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,11 +72,16 @@ class SceneCutMetadataTest(unittest.TestCase):
                     ffmpeg_path,
                     input_path,
                     expected_frames=2,
+                    target_fps=Fraction(30, 1),
                     threshold=27.0,
                 )
             self.assertEqual(result.cut_after, (0,))
             command = run.call_args.args[0]
-            self.assertIn("scdet=threshold=100,metadata=mode=print:file=-", command)
+            self.assertIn(
+                "setpts=PTS-STARTPTS,fps=fps=30/1:round=near:eof_action=pass,"
+                "scdet=threshold=100,metadata=mode=print:file=-",
+                command,
+            )
             self.assertEqual(command[-1], "-")
             self.assertTrue(run.call_args.kwargs["check"])
 

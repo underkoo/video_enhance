@@ -2,6 +2,9 @@ input_dir: ${oc.env:VIDEO_ENHANCE_INPUT,'/mnt/d/Lewd/트위터r'}
 output_dir: ${oc.env:VIDEO_ENHANCE_OUTPUT,'/mnt/d/Lewd/트위터r_enhanced'}
 order: vfi_then_vsr
 
+cfr:
+  target_fps: '30/1'
+
 vfi:
   backend_id: practical-rife-v4.25
   temporal_multiplier: 2

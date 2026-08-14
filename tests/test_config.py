@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from fractions import Fraction
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -40,6 +41,7 @@ class PipelineConfigTest(unittest.TestCase):
             self.assertEqual(config.vfi.temporal_multiplier, 2)
             self.assertEqual(config.vsr.spatial_scale, 2)
             self.assertTrue(config.vsr.post_downsample)
+            self.assertEqual(config.cfr.target_fps, Fraction(30, 1))
             self.assertEqual(config.scene_cut.threshold, 27.0)
 
     def test_scene_cut_threshold_must_be_in_valid_range(self) -> None:
