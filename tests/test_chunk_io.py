@@ -9,6 +9,7 @@ import numpy as np
 from rvfi_sr.chunk_io import (
     FlashVSRInputAssembler,
     RifeInputAssembler,
+    stream_flashvsr_output_frames,
     stream_rife_output_frames,
 )
 from rvfi_sr.rife_chunks import plan_rife_chunks
@@ -177,6 +178,45 @@ class FlashVSRInputAssemblerTest(unittest.TestCase):
             self.assertTrue(np.all(left[3:] == 2))
             self.assertTrue(np.array_equal(right[:5], [3, 4, 5, 6, 7]))
             self.assertTrue(np.all(right[5:] == 7))
+
+    def test_worker_output_merge_removes_context_and_padding(self) -> None:
+        chunks = plan_flashvsr_chunks(frame_count=30, cut_after=())
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            root = Path(temporary_directory)
+            output_paths: list[Path] = []
+            for chunk_index, chunk in enumerate(chunks):
+                path = root / f"output-{chunk_index}.npy"
+                global_indices = np.arange(21) + chunk.source_start
+                frames = np.repeat(
+                    global_indices[:, None, None, None],
+                    3,
+                    axis=3,
+                ).astype(np.uint8)
+                np.save(path, frames, allow_pickle=False)
+                output_paths.append(path)
+            received: list[int] = []
+            stream_flashvsr_output_frames(
+                chunks,
+                tuple(output_paths),
+                width=1,
+                height=1,
+                consume_frame=lambda _index, frame: received.append(frame[0]),
+            )
+            self.assertEqual(received, list(range(30)))
+
+    def test_worker_output_shape_mismatch_fails_fast(self) -> None:
+        chunks = plan_flashvsr_chunks(frame_count=21, cut_after=())
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            path = Path(temporary_directory) / "bad.npy"
+            np.save(path, np.zeros((20, 1, 1, 3), dtype=np.uint8), allow_pickle=False)
+            with self.assertRaisesRegex(ValueError, "shape mismatch"):
+                stream_flashvsr_output_frames(
+                    chunks,
+                    (path,),
+                    width=1,
+                    height=1,
+                    consume_frame=lambda _index, _frame: None,
+                )
 
 
 if __name__ == "__main__":

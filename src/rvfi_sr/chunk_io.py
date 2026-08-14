@@ -372,3 +372,59 @@ def _validate_uint8_frames(
         raise ValueError(
             f"{artifact_name} shape mismatch: expected={expected_shape}, actual={frames.shape}"
         )
+
+
+def stream_flashvsr_output_frames(
+    chunks: tuple[TemporalChunk, ...],
+    worker_output_paths: tuple[Path, ...],
+    *,
+    width: int,
+    height: int,
+    consume_frame: Callable[[int, bytes], None],
+) -> None:
+    """FlashVSR context/padding output을 제거하고 전역 ownership만 순차 방출합니다."""
+
+    if not chunks:
+        raise ValueError("chunks must not be empty")
+    if len(worker_output_paths) != len(chunks):
+        raise ValueError("chunk and worker output path counts must match")
+    if (
+        isinstance(width, bool)
+        or not isinstance(width, int)
+        or isinstance(height, bool)
+        or not isinstance(height, int)
+    ):
+        raise TypeError("width and height must be integers")
+    if width < 1 or height < 1:
+        raise ValueError("width and height must be positive")
+    if not callable(consume_frame):
+        raise TypeError("consume_frame must be callable")
+
+    output_index = 0
+    for chunk, worker_output_path in zip(chunks, worker_output_paths, strict=True):
+        if chunk.output_start != output_index:
+            raise RuntimeError(
+                f"FlashVSR chunk ownership is discontinuous at output {output_index}"
+            )
+        if not isinstance(worker_output_path, Path):
+            raise TypeError("worker_output_paths must contain pathlib.Path values")
+        frames = np.load(
+            worker_output_path.resolve(strict=True),
+            mmap_mode="r",
+            allow_pickle=False,
+        )
+        _validate_uint8_frames(
+            frames,
+            expected_frames=21,
+            width=width,
+            height=height,
+            artifact_name="FlashVSR worker output",
+        )
+        for local_index in range(chunk.keep_start, chunk.keep_stop):
+            consume_frame(output_index, frames[local_index].tobytes(order="C"))
+            output_index += 1
+    if output_index != chunks[-1].output_stop:
+        raise RuntimeError(
+            f"FlashVSR merged output count mismatch: expected={chunks[-1].output_stop}, "
+            f"actual={output_index}"
+        )

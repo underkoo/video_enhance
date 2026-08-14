@@ -36,6 +36,7 @@ class TimelineContractTest(unittest.TestCase):
         self.assertEqual(contract.output_fps, Fraction(120_000, 1_001))
         self.assertEqual(contract.input_duration, contract.output_duration)
         self.assertEqual(contract.terminal_hold_frames, 3)
+        self.assertEqual(contract.output_cut_after, (7,))
 
     def test_duplicate_scene_cut_indices_fail_fast(self) -> None:
         with self.assertRaisesRegex(ValueError, "duplicate scene-cut"):

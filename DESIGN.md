@@ -74,6 +74,8 @@ probe → CFR normalization → scene-cut detection
 - frame-independent image SR이 아니라 시간축 정보를 사용하는 Video SR backend를 기본으로 합니다.
 - RIFE worker output은 chunk별 ownership slice만 순차 방출하고, FlashVSR 입력은 scene별
   21-frame window와 5-frame left context로 다시 조립합니다.
+- FlashVSR worker output에서도 left context와 terminal padding을 제거하고 각 chunk의 전역
+  ownership만 encoder에 전달합니다.
 - 24GB VRAM을 넘는 입력은 spatial tile과 temporal chunk를 함께 사용합니다.
 - tile overlap/crop은 출력 좌표계에서 자동 검증합니다.
 - 생성형 세부 복원 강도는 기본값에서 보수적으로 제한합니다.
@@ -183,7 +185,7 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 
 ## 9. 현재 상태
 
-- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 85개
+- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 87개
 - 완료: 공식 소스 기반 모델 shortlist와 라이선스/runtime 격리 정책
 - 완료: Pydantic/Hydra 제어 설정, backend protocol, RTX 3090/RIFE deterministic preflight
 - 완료: FlashVSR v1.1 고정 환경, 4개 checkpoint digest, SM 8.6 sparse CUDA kernel 수치 smoke
@@ -193,6 +195,7 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 - 완료: 077 영상 191-frame BT.709 limited RGB stream 독립 2회 byte 결정성 검증
 - 완료: 077 영상의 4개 overlapping RIFE NPY input을 bounded memory/atomic write로 실측 조립
 - 완료: 077 영상 실제 RIFE 4-worker 결과를 ownership merge해 FlashVSR 입력 24개로 조립
-- 진행: FlashVSR output merge/encode orchestration과 고해상도 VSR 전략
+- 완료: FlashVSR context/padding 제거와 전역 output ownership merge 계약
+- 진행: atomic MP4 encode/audio remux와 고해상도 VSR 전략
 - 차단: 1280×720 이상은 현재 single-pass RTX 3090 실측 한도를 초과하므로 자동 실행 금지
 - 미실행: spatial tile 품질 검증, 전체 batch 처리

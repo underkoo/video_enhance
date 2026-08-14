@@ -96,6 +96,12 @@ class TimelineContract:
         return self.multiplier - 1
 
     @property
+    def output_cut_after(self) -> tuple[int, ...]:
+        """source scene 경계를 보간된 output timeline index로 변환합니다."""
+
+        return tuple((index + 1) * self.multiplier - 1 for index in self.cut_after)
+
+    @property
     def input_duration(self) -> Fraction:
         return Fraction(self.input_frames, 1) / self.input_fps
 
