@@ -13,10 +13,19 @@ class ColorMetadata:
     """디코딩과 재인코딩 사이에 보존할 색상 메타데이터입니다."""
 
     pixel_format: str
-    range: str
-    space: str
-    transfer: str
-    primaries: str
+    range: str | None
+    space: str | None
+    transfer: str | None
+    primaries: str | None
+
+    @property
+    def is_complete(self) -> bool:
+        """재인코딩에 필요한 네 color tag가 모두 기록됐는지 반환합니다."""
+
+        return all(
+            value is not None
+            for value in (self.range, self.space, self.transfer, self.primaries)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +78,15 @@ def _string(mapping: Mapping[str, Any], key: str) -> str:
     value = mapping.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} must be a non-empty string")
+    return value.strip()
+
+
+def _optional_string(mapping: Mapping[str, Any], key: str) -> str | None:
+    value = mapping.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{key} must be a non-empty string when present")
     return value.strip()
 
 
@@ -153,10 +171,10 @@ def parse_ffprobe_payload(payload: Mapping[str, object]) -> MediaSpec:
         duration=_positive_fraction(format_payload, "duration"),
         color=ColorMetadata(
             pixel_format=_string(video, "pix_fmt"),
-            range=_string(video, "color_range"),
-            space=_string(video, "color_space"),
-            transfer=_string(video, "color_transfer"),
-            primaries=_string(video, "color_primaries"),
+            range=_optional_string(video, "color_range"),
+            space=_optional_string(video, "color_space"),
+            transfer=_optional_string(video, "color_transfer"),
+            primaries=_optional_string(video, "color_primaries"),
         ),
         audio=audio,
     )

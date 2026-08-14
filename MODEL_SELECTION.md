@@ -66,3 +66,17 @@ FlashVSR v1.1의 네 weight는 Hugging Face revision
 3. 실제 영상 3개 짧은 crop에서 RIFE/FlashVSR smoke test를 수행합니다.
 4. BiM-VFI는 제한 라이선스 opt-in을 받은 연구 preset에서만 RIFE와 A/B합니다.
 5. VFI→VSR와 VSR→VFI를 temporal metric 및 수동 artifact로 비교한 뒤 순서를 확정합니다.
+
+## 현재 preflight 결과
+
+- RTX 3090: 24,576MiB, compute capability 8.6 확인
+- Practical-RIFE worker: Python 3.11.13, PyTorch 2.6.0+cu124, FP16 load 성공
+- synthetic moving-square: 입력 `(2,64,96,3)`에서 출력 `(4,64,96,3)` 및 terminal hold 확인
+- 독립 프로세스 2회 출력: byte-identical SHA-256
+  `e510380db1b214f6cfef51383101e1e80465e365ed0829234d07ef4d4371ee12`
+
+초기 FP16 smoke에서는 upstream `warplayer`의 cached sampling grid가 float32로 생성돼
+`grid_sample` dtype mismatch가 발생했습니다. 공식 wrapper가 global default Half tensor에 의존하는
+동작을 격리 worker 안에서 default FP16 dtype으로 재현해 해결했습니다. 또한 cuDNN benchmark/TF32를
+끄고 deterministic algorithms 및 CUBLAS workspace를 고정하기 전에는 중간 프레임의 48개 channel
+값에서 최대 6/255 차이가 재현됐습니다. 현재 smoke는 이 설정을 강제합니다.

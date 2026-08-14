@@ -63,6 +63,20 @@ class ProbeParserTest(unittest.TestCase):
         spec = parse_ffprobe_payload(payload)
         self.assertIsNone(spec.audio)
 
+    def test_missing_color_tags_are_preserved_as_unknown(self) -> None:
+        payload = make_payload()
+        video = payload["streams"][0]
+        del video["color_range"]
+        del video["color_space"]
+        del video["color_transfer"]
+        del video["color_primaries"]
+        spec = parse_ffprobe_payload(payload)
+        self.assertIsNone(spec.color.range)
+        self.assertIsNone(spec.color.space)
+        self.assertIsNone(spec.color.transfer)
+        self.assertIsNone(spec.color.primaries)
+        self.assertFalse(spec.color.is_complete)
+
     def test_multiple_video_streams_fail_fast(self) -> None:
         payload = make_payload()
         payload["streams"].append(dict(payload["streams"][0]))

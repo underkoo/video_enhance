@@ -1,0 +1,5 @@
+# Practical-RIFE는 제어 환경과 분리된 Python 3.11 worker에서만 사용합니다.
+# torch/torchvision은 bootstrap script가 공식 cu124 index에서 별도로 설치합니다.
+numpy==1.23.5
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124

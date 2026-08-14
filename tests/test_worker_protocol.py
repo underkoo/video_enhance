@@ -83,6 +83,32 @@ class WorkerProtocolTest(unittest.TestCase):
                 dtype="uint8",
             )
 
+    def test_failure_response_requires_diagnostic_and_no_output_claim(self) -> None:
+        response = WorkerResponse(
+            schema_version=1,
+            job_id="smoke-0001",
+            status=WorkerStatus.FAILED,
+            output_sha256=None,
+            frame_count=None,
+            width=None,
+            height=None,
+            dtype=None,
+            error_type="RuntimeError",
+            error_message="CUDA out of memory",
+        )
+        self.assertEqual(WorkerResponse.from_json(response.to_json()), response)
+        with self.assertRaisesRegex(ValueError, "diagnostic"):
+            WorkerResponse(
+                schema_version=1,
+                job_id="smoke-0001",
+                status=WorkerStatus.FAILED,
+                output_sha256=None,
+                frame_count=None,
+                width=None,
+                height=None,
+                dtype=None,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

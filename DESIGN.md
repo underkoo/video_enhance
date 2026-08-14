@@ -165,5 +165,6 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 
 - 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 17개
 - 완료: 공식 소스 기반 모델 shortlist와 라이선스/runtime 격리 정책
-- 진행: Pydantic/Hydra 제어 설정, backend protocol 및 preflight
-- 미실행: 모델별 환경 설치, 체크포인트 다운로드, 실제 영상 추론, 전체 batch 처리
+- 완료: Pydantic/Hydra 제어 설정, backend protocol, RTX 3090/RIFE deterministic preflight
+- 진행: 고정 FFmpeg/ffprobe 기반 실제 영상 probe, CFR/scene-cut/chunking
+- 미실행: FlashVSR 환경과 checkpoint, 실제 영상 추론, 전체 batch 처리

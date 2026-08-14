@@ -120,6 +120,8 @@ class WorkerResponse:
     width: int | None
     height: int | None
     dtype: str | None
+    error_type: str | None = None
+    error_message: str | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != _PROTOCOL_VERSION:
@@ -129,6 +131,8 @@ class WorkerResponse:
         if not isinstance(self.status, WorkerStatus):
             object.__setattr__(self, "status", WorkerStatus(self.status))
         if self.status is WorkerStatus.SUCCEEDED:
+            if self.error_type is not None or self.error_message is not None:
+                raise ValueError("successful response must not contain an error diagnostic")
             if self.output_sha256 is None or not _SHA256_PATTERN.fullmatch(
                 self.output_sha256
             ):
@@ -141,17 +145,25 @@ class WorkerResponse:
                 raise ValueError("successful response requires positive frame shape")
             if self.dtype not in {"uint8", "uint16", "float16", "float32"}:
                 raise ValueError("successful response has an unsupported dtype")
-        elif any(
-            value is not None
-            for value in (
-                self.output_sha256,
-                self.frame_count,
-                self.width,
-                self.height,
-                self.dtype,
-            )
-        ):
-            raise ValueError("failed response must not claim an output artifact")
+        else:
+            if any(
+                value is not None
+                for value in (
+                    self.output_sha256,
+                    self.frame_count,
+                    self.width,
+                    self.height,
+                    self.dtype,
+                )
+            ):
+                raise ValueError("failed response must not claim an output artifact")
+            if (
+                self.error_type is None
+                or not self.error_type.strip()
+                or self.error_message is None
+                or not self.error_message.strip()
+            ):
+                raise ValueError("failed response requires an error diagnostic")
 
     def to_json(self) -> str:
         """응답을 안정적인 단일 JSON 객체로 직렬화합니다."""

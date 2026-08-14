@@ -17,5 +17,22 @@ python3 -m venv .venv
 .venv/bin/mypy
 ```
 
+## RIFE 격리 환경
+
+고정된 Python 3.11.13/CUDA 12.4 worker 환경, upstream commit, checkpoint를 설치하고
+동일 입력 2회 byte 결정성까지 검사합니다. 모든 대용량 runtime 파일은 `.runtime/` 아래에만
+생성되며 Git에는 포함되지 않습니다.
+
+```bash
+scripts/bootstrap_rife.sh
+```
+
+FFmpeg/ffprobe는 변경 가능한 `latest` URL을 사용하지 않고 고정 release asset과 SHA-256으로
+`.runtime/tools/`에 설치합니다.
+
+```bash
+scripts/bootstrap_ffmpeg.sh
+```
+
 상세 설계는 [DESIGN.md](DESIGN.md), 모델 근거는 [MODEL_SELECTION.md](MODEL_SELECTION.md)를
 참고합니다.
