@@ -83,8 +83,12 @@ probe → CFR normalization → scene-cut detection
 ### 4.4 인코딩 및 오디오
 
 - 검증용 lossless/intermediate와 배포용 encode를 분리할 수 있게 합니다.
+- 기본 배포 encode는 libx264 slow/CRF 16, `yuv420p`, BT.709 limited입니다. container tag와
+  x264 bitstream VUI를 모두 설정합니다.
 - 오디오는 재생 속도를 변경하지 않고 원본 stream을 remux합니다.
-- 비디오·오디오 duration 차이는 출력 프레임 1개 이내만 허용합니다.
+- 비디오·오디오 duration 차이는 `max(출력 1 frame, AAC 1 frame)` 이내만 허용합니다.
+- `.partial.mp4`의 codec, 크기, frame count, rational FPS, video duration, 네 color tag, audio
+  존재 여부를 count-decode ffprobe로 검증한 뒤에만 atomic rename합니다.
 
 ## 5. 코드 구조
 
@@ -185,7 +189,7 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 
 ## 9. 현재 상태
 
-- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 87개
+- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 92개
 - 완료: 공식 소스 기반 모델 shortlist와 라이선스/runtime 격리 정책
 - 완료: Pydantic/Hydra 제어 설정, backend protocol, RTX 3090/RIFE deterministic preflight
 - 완료: FlashVSR v1.1 고정 환경, 4개 checkpoint digest, SM 8.6 sparse CUDA kernel 수치 smoke
@@ -196,6 +200,7 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 - 완료: 077 영상의 4개 overlapping RIFE NPY input을 bounded memory/atomic write로 실측 조립
 - 완료: 077 영상 실제 RIFE 4-worker 결과를 ownership merge해 FlashVSR 입력 24개로 조립
 - 완료: FlashVSR context/padding 제거와 전역 output ownership merge 계약
-- 진행: atomic MP4 encode/audio remux와 고해상도 VSR 전략
+- 완료: 1208×2160/60fps/21-frame MP4 atomic encode, BT.709 VUI, AAC remux/duration 검증
+- 진행: 고해상도 VSR 전략과 전체 pipeline CLI/resume
 - 차단: 1280×720 이상은 현재 single-pass RTX 3090 실측 한도를 초과하므로 자동 실행 금지
 - 미실행: spatial tile 품질 검증, 전체 batch 처리

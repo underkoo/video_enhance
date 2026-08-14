@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from fractions import Fraction
 from pathlib import Path
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -61,6 +61,13 @@ class ColorConfig(StrictConfigModel):
     untagged_space: VideoColorSpace = VideoColorSpace.BT709
 
 
+class EncodeConfig(StrictConfigModel):
+    """검증된 최종 H.264 encode 품질 설정입니다."""
+
+    crf: Annotated[int, Field(ge=0, le=51)] = 16
+    preset: Literal["medium", "slow", "slower"] = "slow"
+
+
 class RuntimeConfig(StrictConfigModel):
     """GPU와 라이선스 실행 정책입니다."""
 
@@ -92,6 +99,7 @@ class PipelineConfig(StrictConfigModel):
     vsr: VSRConfig
     cfr: CfrConfig = CfrConfig()
     color: ColorConfig = ColorConfig()
+    encode: EncodeConfig = EncodeConfig()
     scene_cut: SceneCutConfig = SceneCutConfig()
     runtime: RuntimeConfig = RuntimeConfig()
 

@@ -21,6 +21,7 @@ def make_payload() -> dict[str, object]:
                 "r_frame_rate": "30000/1001",
                 "time_base": "1/90000",
                 "nb_read_frames": "300",
+                "duration": "10.010000",
                 "color_range": "tv",
                 "color_space": "bt709",
                 "color_transfer": "bt709",
@@ -32,6 +33,7 @@ def make_payload() -> dict[str, object]:
                 "codec_name": "aac",
                 "sample_rate": "48000",
                 "channels": 2,
+                "duration": "10.010000",
             },
         ],
     }
@@ -46,9 +48,11 @@ class ProbeParserTest(unittest.TestCase):
         self.assertEqual(spec.nominal_fps, Fraction(30_000, 1_001))
         self.assertEqual(spec.time_base, Fraction(1, 90_000))
         self.assertEqual(spec.frame_count, 300)
+        self.assertEqual(spec.video_duration, Fraction(1001, 100))
         self.assertEqual(spec.duration, Fraction(1001, 100))
         self.assertEqual(spec.color.space, "bt709")
         self.assertEqual(spec.audio.codec, "aac")
+        self.assertEqual(spec.audio.duration, Fraction(1001, 100))
         self.assertFalse(spec.requires_cfr_normalization)
 
     def test_rate_mismatch_requires_cfr_normalization(self) -> None:

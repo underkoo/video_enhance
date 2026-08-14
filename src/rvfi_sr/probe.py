@@ -36,6 +36,7 @@ class AudioMetadata:
     codec: str
     sample_rate: int
     channels: int
+    duration: Fraction
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +52,7 @@ class MediaSpec:
     nominal_fps: Fraction
     time_base: Fraction
     frame_count: int
+    video_duration: Fraction
     duration: Fraction
     color: ColorMetadata
     audio: AudioMetadata | None
@@ -156,6 +158,7 @@ def parse_ffprobe_payload(payload: Mapping[str, object]) -> MediaSpec:
             codec=_string(audio_payload, "codec_name"),
             sample_rate=sample_rate,
             channels=channels,
+            duration=_positive_fraction(audio_payload, "duration"),
         )
 
     return MediaSpec(
@@ -168,6 +171,7 @@ def parse_ffprobe_payload(payload: Mapping[str, object]) -> MediaSpec:
         nominal_fps=_positive_fraction(video, "r_frame_rate"),
         time_base=_positive_fraction(video, "time_base"),
         frame_count=frame_count,
+        video_duration=_positive_fraction(video, "duration"),
         duration=_positive_fraction(format_payload, "duration"),
         color=ColorMetadata(
             pixel_format=_string(video, "pix_fmt"),

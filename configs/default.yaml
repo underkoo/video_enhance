@@ -10,6 +10,10 @@ color:
   untagged_range: tv
   untagged_space: bt709
 
+encode:
+  crf: 16
+  preset: slow
+
 vfi:
   backend_id: practical-rife-v4.25
   temporal_multiplier: 2

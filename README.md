@@ -22,6 +22,14 @@ RIFE 입력은 scene을 넘지 않으며 최대 64 source frame, 경계 1-frame 
 077 실제 영상 결합 smoke에서는 RIFE worker 네 개가 29.66초 내 완료·병합됐고, 382-frame
 보간 timeline을 FlashVSR 21-frame 입력 24개로 gap/overlap 없이 재조립했습니다.
 
+기존 실해상도 FlashVSR 21-frame 결과는 `/mnt/d`에 1208×2160, 60fps, H.264 CRF 16으로
+atomic encode했습니다. 출력은 21프레임/0.35초이고 BT.709 limited의 range/matrix/transfer/
+primaries가 모두 ffprobe 검증을 통과했습니다.
+
+동일 smoke의 AAC copy 경로도 검증했습니다. video는 0.350000초, 44.1kHz AAC는 packet
+경계상 0.371519초이며 차이 21.519ms는 AAC 1-frame(23.220ms) 이내입니다. validator는
+`max(video 1-frame, AAC 1-frame)`을 넘으면 결과를 확정하지 않습니다.
+
 ## 테스트
 
 Python 3.12 제어 환경을 만들고 테스트합니다.
