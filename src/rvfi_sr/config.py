@@ -40,6 +40,12 @@ class VSRConfig(StrictConfigModel):
     post_downsample: bool = False
 
 
+class SceneCutConfig(StrictConfigModel):
+    """FFmpeg scdet의 명시적 장면 전환 판정 설정입니다."""
+
+    threshold: Annotated[float, Field(gt=0.0, le=100.0)] = 27.0
+
+
 class RuntimeConfig(StrictConfigModel):
     """GPU와 라이선스 실행 정책입니다."""
 
@@ -69,6 +75,7 @@ class PipelineConfig(StrictConfigModel):
     order: PipelineOrder = PipelineOrder.VFI_THEN_VSR
     vfi: VFIConfig
     vsr: VSRConfig
+    scene_cut: SceneCutConfig = SceneCutConfig()
     runtime: RuntimeConfig = RuntimeConfig()
 
     @field_validator("input_dir", "output_dir", mode="after")

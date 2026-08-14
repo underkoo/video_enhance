@@ -40,6 +40,14 @@ class PipelineConfigTest(unittest.TestCase):
             self.assertEqual(config.vfi.temporal_multiplier, 2)
             self.assertEqual(config.vsr.spatial_scale, 2)
             self.assertTrue(config.vsr.post_downsample)
+            self.assertEqual(config.scene_cut.threshold, 27.0)
+
+    def test_scene_cut_threshold_must_be_in_valid_range(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            payload = make_payload(Path(temporary_directory))
+            payload["scene_cut"] = {"threshold": 0.0}
+            with self.assertRaisesRegex(ValidationError, "greater than 0"):
+                PipelineConfig.model_validate(payload)
 
     def test_unknown_fields_fail_fast(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

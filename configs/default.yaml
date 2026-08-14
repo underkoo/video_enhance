@@ -12,6 +12,10 @@ vsr:
   # FlashVSR는 native 4x이므로 4x 결과를 메모리에서 2x로 축소합니다.
   post_downsample: true
 
+scene_cut:
+  # 001 영상 전수 스캔에서 max score=12.87. 전체 smoke set 전까지는 보수적 초기값입니다.
+  threshold: 27.0
+
 runtime:
   allow_restricted_license: false
   fp16: true

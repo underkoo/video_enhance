@@ -53,6 +53,9 @@ probe → CFR normalization → scene-cut detection
 ### 4.2 Scene-cut-aware VFI
 
 - 각 인접 프레임 쌍의 scene cut 여부를 먼저 결정합니다.
+- 고정 FFmpeg `scdet`에서 모든 프레임 score를 추출한 뒤 Python에서 명시적 임계값을 적용합니다.
+- 초기 임계값 27.0은 001 영상 1,515프레임 전수 스캔(max 12.87)에서 fast-motion 오검출이 없음을
+  확인했으며, 전체 대표 클립 검증 전까지 후보값으로 취급합니다.
 - 일반 구간만 VFI backend에 전달합니다.
 - cut 구간은 보간하지 않고 이전 프레임을 유지합니다.
 - 마지막 프레임 terminal hold를 추가해 오디오와 표시 시간을 보존합니다.
@@ -79,7 +82,8 @@ src/rvfi_sr/
   timeline.py        # CFR, scene cut, frame-count 계약
   probe.py           # ffprobe JSON parser
   config.py          # Pydantic 설정 검증
-  scene_cut.py       # cut detector 및 transition plan
+  scene_cut.py       # strict FFmpeg scdet parser 및 transition index
+  temporal_chunks.py # scene 경계를 넘지 않는 FlashVSR chunk ownership
   pipeline.py        # 단계 orchestration/resume
   backends/
     vfi_base.py
@@ -166,11 +170,12 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 
 ## 9. 현재 상태
 
-- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 56개
+- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 65개
 - 완료: 공식 소스 기반 모델 shortlist와 라이선스/runtime 격리 정책
 - 완료: Pydantic/Hydra 제어 설정, backend protocol, RTX 3090/RIFE deterministic preflight
 - 완료: FlashVSR v1.1 고정 환경, 4개 checkpoint digest, SM 8.6 sparse CUDA kernel 수치 smoke
 - 완료: FlashVSR synthetic 2회 byte repeatability 및 604×1080 실제 영상 21-frame smoke
-- 진행: 고정 FFmpeg/ffprobe 기반 CFR/scene-cut/chunking과 고해상도 VSR 전략
+- 완료: 고정 FFmpeg `scdet` strict parser, scene-safe 21-frame/5-context FlashVSR chunk planner
+- 진행: CFR decode/encode orchestration과 고해상도 VSR 전략
 - 차단: 1280×720 이상은 현재 single-pass RTX 3090 실측 한도를 초과하므로 자동 실행 금지
 - 미실행: spatial tile 품질 검증, 전체 batch 처리
