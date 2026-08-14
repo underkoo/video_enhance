@@ -233,7 +233,7 @@ def _write_stage_receipts(paths: tuple[Path, ...], producers: tuple[str, ...]) -
         write_npy_receipt(path, producer_sha256=producer)
 
 
-def _run_pipeline(
+def _run_forward_pipeline(
     repo_root: Path,
     input_path: Path,
     output_path: Path,
@@ -250,7 +250,7 @@ def _run_pipeline(
     if config.vsr.backend_id != "mmagic-realbasicvsr":
         raise ValueError("this entrypoint only supports mmagic-realbasicvsr")
     if config.order.value != "vfi_then_vsr":
-        raise ValueError("this entrypoint only supports vfi_then_vsr")
+        raise ValueError("forward pipeline requires vfi_then_vsr")
     if output_path.parent != config.output_dir:
         raise ValueError(f"output parent must equal configured output_dir: {config.output_dir}")
     if config.runtime.final_output_root is None:
@@ -307,11 +307,12 @@ def _run_pipeline(
         max_source_frames=max_vsr_frames,
     )
     run_plan = RunPlanManifest(
-        schema_version=1,
+        schema_version=2,
         input_path=str(input_path),
         output_path=str(output_path),
         input_sha256=sha256_file(input_path),
         config_sha256=fingerprint_text(config.model_dump_json()),
+        order=config.order.value,
         source_width=spec.width,
         source_height=spec.height,
         source_frames=spec.frame_count,
@@ -608,6 +609,316 @@ def _run_pipeline(
     finally:
         if not finalized:
             encoder.abort()
+
+
+def _run_reverse_pipeline(
+    repo_root: Path,
+    input_path: Path,
+    output_path: Path,
+    config: PipelineConfig,
+    runtime: dict[str, Path],
+    work_dir: Path,
+    *,
+    resume: bool,
+    checkpoint_after_vsr_chunks: int | None,
+) -> Path:
+    """research A/B용 RealBasicVSR → Practical-RIFE 경로를 실행합니다."""
+
+    started_at = time.perf_counter()
+    if resume:
+        raise ValueError("resume is not yet supported for the research reverse pipeline")
+    if checkpoint_after_vsr_chunks is not None:
+        raise ValueError("checkpoint stop is only supported for the forward pipeline")
+    if config.vfi.backend_id != "practical-rife-v4.25":
+        raise ValueError("reverse pipeline requires practical-rife-v4.25")
+    if config.vsr.backend_id != "mmagic-realbasicvsr":
+        raise ValueError("reverse pipeline requires mmagic-realbasicvsr")
+    if config.order.value != "vsr_then_vfi":
+        raise ValueError("reverse pipeline requires vsr_then_vfi")
+    if output_path.parent != config.output_dir:
+        raise ValueError(f"output parent must equal configured output_dir: {config.output_dir}")
+    if config.runtime.final_output_root is None:
+        raise ValueError("runtime.final_output_root must be configured")
+
+    spec = run_ffprobe(runtime["ffprobe"], input_path)
+    if spec.audio is not None and spec.audio.codec != "aac":
+        raise ValueError(f"only AAC audio remux is supported, got {spec.audio.codec!r}")
+    cfr_plan = probe_cfr_plan(
+        runtime["ffmpeg"],
+        input_path,
+        expected_source_frames=spec.frame_count,
+        target_fps=config.cfr.target_fps,
+    )
+    scene = detect_scene_cuts(
+        runtime["ffmpeg"],
+        input_path,
+        expected_frames=cfr_plan.output_frames,
+        target_fps=config.cfr.target_fps,
+        threshold=config.scene_cut.threshold,
+    )
+    color = RgbDecodeContract.create(
+        spec.color,
+        untagged_range=config.color.untagged_range,
+        untagged_space=config.color.untagged_space,
+    )
+    timeline = TimelineContract.create(
+        cfr_plan.output_frames,
+        config.cfr.target_fps,
+        config.vfi.temporal_multiplier,
+        scene.cut_after,
+    )
+    max_vsr_frames = RealBasicVSRResolutionContract.max_model_frames(
+        width=spec.width,
+        height=spec.height,
+    )
+    vsr_chunks = plan_realbasicvsr_chunks(
+        frame_count=cfr_plan.output_frames,
+        cut_after=scene.cut_after,
+        max_source_frames=max_vsr_frames,
+    )
+    rife_chunks = plan_rife_chunks(
+        frame_count=cfr_plan.output_frames,
+        cut_after=scene.cut_after,
+        multiplier=config.vfi.temporal_multiplier,
+    )
+    run_plan = RunPlanManifest(
+        schema_version=2,
+        input_path=str(input_path),
+        output_path=str(output_path),
+        input_sha256=sha256_file(input_path),
+        config_sha256=fingerprint_text(config.model_dump_json()),
+        order=config.order.value,
+        source_width=spec.width,
+        source_height=spec.height,
+        source_frames=spec.frame_count,
+        cfr_frames=cfr_plan.output_frames,
+        cfr_dropped_frames=cfr_plan.dropped_frames,
+        cfr_duplicated_frames=cfr_plan.duplicated_frames,
+        target_fps=_fraction_string(config.cfr.target_fps),
+        scene_cut_after=scene.cut_after,
+        vfi_backend_id=config.vfi.backend_id,
+        vfi_multiplier=config.vfi.temporal_multiplier,
+        rife_chunk_count=len(rife_chunks),
+        vsr_backend_id=config.vsr.backend_id,
+        vsr_scale=config.vsr.spatial_scale,
+        vsr_max_model_frames=max_vsr_frames,
+        vsr_chunk_count=len(vsr_chunks),
+        output_fps=_fraction_string(timeline.output_fps),
+        output_frames=timeline.output_frames,
+    )
+    write_run_plan(work_dir / "run-plan.json", run_plan)
+    print(
+        f"reverse preflight: source={spec.width}x{spec.height}/"
+        f"{cfr_plan.output_frames} CFR frames, cuts={len(scene.cut_after)}, "
+        f"VSR chunks={len(vsr_chunks)}, RIFE chunks={len(rife_chunks)}",
+        flush=True,
+    )
+
+    vsr_input_dir = work_dir / "reverse-vsr-input"
+    vsr_assembler = RealBasicVSRInputAssembler(
+        vsr_chunks,
+        width=spec.width,
+        height=spec.height,
+        output_dir=vsr_input_dir,
+    )
+    stream_cfr_rgb24_frames(
+        runtime["ffmpeg"],
+        input_path,
+        width=spec.width,
+        height=spec.height,
+        plan=cfr_plan,
+        color=color,
+        consume_frame=vsr_assembler.consume,
+    )
+    vsr_input_paths = vsr_assembler.finalize()
+    worker_environment = {"PYTHONPATH": str(repo_root / "src")}
+    vsr_output_dir = work_dir / "reverse-vsr-output"
+    vsr_output_dir.mkdir(parents=True, exist_ok=False)
+    vsr_output_paths: list[Path] = []
+    with PersistentWorker(
+        (
+            str(runtime["vsr_python"]),
+            str(repo_root / "workers/realbasicvsr_worker.py"),
+            "--checkpoint",
+            str(runtime["vsr_checkpoint"]),
+            "--persistent",
+        ),
+        timeout_seconds=config.runtime.worker_timeout_seconds,
+        environment=worker_environment,
+    ) as vsr_worker:
+        for index, (chunk, chunk_input) in enumerate(
+            zip(vsr_chunks, vsr_input_paths, strict=True)
+        ):
+            chunk_output = vsr_output_dir / f"vsr-output-{index:06d}.npy"
+            request = WorkerRequest.create(
+                job_id=f"reverse-realbasicvsr-{index:06d}",
+                backend_id=config.vsr.backend_id,
+                input_path=chunk_input,
+                output_path=chunk_output,
+                parameters={
+                    "native_scale": 4,
+                    "output_scale": config.vsr.spatial_scale,
+                    "fp16": config.runtime.fp16,
+                    "gpu_index": config.runtime.gpu_index,
+                },
+            )
+            print(f"reverse RealBasicVSR {index + 1}/{len(vsr_chunks)}", flush=True)
+            response = vsr_worker.run(request)
+            _validate_worker_shape(
+                response,
+                frames=chunk.model_frames,
+                width=spec.width * config.vsr.spatial_scale,
+                height=spec.height * config.vsr.spatial_scale,
+            )
+            vsr_output_paths.append(chunk_output)
+
+    scaled_width = spec.width * config.vsr.spatial_scale
+    scaled_height = spec.height * config.vsr.spatial_scale
+    rife_input_dir = work_dir / "reverse-rife-input"
+    rife_assembler = RifeInputAssembler(
+        rife_chunks,
+        width=scaled_width,
+        height=scaled_height,
+        output_dir=rife_input_dir,
+    )
+    stream_realbasicvsr_output_frames(
+        vsr_chunks,
+        tuple(vsr_output_paths),
+        width=spec.width,
+        height=spec.height,
+        output_scale=config.vsr.spatial_scale,
+        consume_frame=rife_assembler.consume,
+    )
+    rife_input_paths = rife_assembler.finalize()
+    shutil.rmtree(vsr_input_dir)
+    shutil.rmtree(vsr_output_dir)
+
+    rife_output_dir = work_dir / "reverse-rife-output"
+    rife_output_dir.mkdir(parents=True, exist_ok=False)
+    rife_output_paths: list[Path | None] = []
+    for index, (chunk, chunk_input) in enumerate(
+        zip(rife_chunks, rife_input_paths, strict=True)
+    ):
+        if not chunk.use_model:
+            rife_output_paths.append(None)
+            continue
+        chunk_output = rife_output_dir / f"rife-output-{index:06d}.npy"
+        request = WorkerRequest.create(
+            job_id=f"reverse-rife-{index:06d}",
+            backend_id=config.vfi.backend_id,
+            input_path=chunk_input,
+            output_path=chunk_output,
+            parameters={
+                "temporal_multiplier": config.vfi.temporal_multiplier,
+                "fp16": config.runtime.fp16,
+                "inference_scale": 1.0,
+                "gpu_index": config.runtime.gpu_index,
+            },
+        )
+        print(f"reverse RIFE {index + 1}/{len(rife_chunks)}", flush=True)
+        response = run_worker(
+            (
+                str(runtime["rife_python"]),
+                str(repo_root / "workers/practical_rife_worker.py"),
+                "--source-root",
+                str(runtime["rife_source"]),
+                "--checkpoint-root",
+                str(runtime["rife_checkpoint"]),
+            ),
+            request,
+            timeout_seconds=config.runtime.worker_timeout_seconds,
+            environment=worker_environment,
+        )
+        _validate_worker_shape(
+            response,
+            frames=chunk.worker_output_frames,
+            width=scaled_width,
+            height=scaled_height,
+        )
+        rife_output_paths.append(chunk_output)
+
+    encode_contract = EncodeContract.create(
+        input_path=input_path,
+        output_path=output_path,
+        final_output_root=config.runtime.final_output_root,
+        width=scaled_width,
+        height=scaled_height,
+        fps=timeline.output_fps,
+        frame_count=timeline.output_frames,
+        expect_audio=spec.audio is not None,
+        source_audio_duration=(spec.audio.duration if spec.audio is not None else None),
+        crf=config.encode.crf,
+        preset=config.encode.preset,
+    )
+    encoder = AtomicMp4Encoder(
+        encode_contract,
+        ffmpeg_path=runtime["ffmpeg"],
+        timeout_seconds=config.runtime.worker_timeout_seconds,
+    )
+    finalized = False
+    try:
+        stream_rife_output_frames(
+            rife_chunks,
+            rife_input_paths,
+            tuple(rife_output_paths),
+            width=scaled_width,
+            height=scaled_height,
+            consume_frame=encoder.consume,
+        )
+        result = encoder.finalize(runtime["ffprobe"])
+        finalized = True
+        write_provenance_manifest(
+            output_path.with_name(f"{output_path.stem}.provenance.json"),
+            (
+                MODEL_PROVENANCE[config.vsr.backend_id],
+                MODEL_PROVENANCE[config.vfi.backend_id],
+            ),
+        )
+        write_completed_run_manifest(
+            output_path.with_name(f"{output_path.stem}.run.json"),
+            plan=run_plan,
+            output_sha256=sha256_file(result),
+            output_size_bytes=result.stat().st_size,
+            elapsed_seconds=time.perf_counter() - started_at,
+        )
+        return result
+    finally:
+        if not finalized:
+            encoder.abort()
+
+
+def _run_pipeline(
+    repo_root: Path,
+    input_path: Path,
+    output_path: Path,
+    config: PipelineConfig,
+    runtime: dict[str, Path],
+    work_dir: Path,
+    *,
+    resume: bool,
+    checkpoint_after_vsr_chunks: int | None,
+) -> Path:
+    if config.order.value == "vfi_then_vsr":
+        return _run_forward_pipeline(
+            repo_root,
+            input_path,
+            output_path,
+            config,
+            runtime,
+            work_dir,
+            resume=resume,
+            checkpoint_after_vsr_chunks=checkpoint_after_vsr_chunks,
+        )
+    return _run_reverse_pipeline(
+        repo_root,
+        input_path,
+        output_path,
+        config,
+        runtime,
+        work_dir,
+        resume=resume,
+        checkpoint_after_vsr_chunks=checkpoint_after_vsr_chunks,
+    )
 
 
 def main() -> int:

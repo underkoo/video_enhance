@@ -16,11 +16,12 @@ from rvfi_sr.run_manifest import (
 
 def make_plan(root: Path) -> RunPlanManifest:
     return RunPlanManifest(
-        schema_version=1,
+        schema_version=2,
         input_path=str(root / "input.mp4"),
         output_path=str(root / "output.mp4"),
         input_sha256="a" * 64,
         config_sha256="b" * 64,
+        order="vfi_then_vsr",
         source_width=604,
         source_height=1080,
         source_frames=190,

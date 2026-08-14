@@ -67,7 +67,7 @@ FlashVSR v1.1의 네 weight는 Hugging Face revision
 2. 실제 영상 3개 짧은 crop에서 RIFE→FlashVSR 결합 smoke를 수행합니다.
 3. FlashVSR tile 근사와 RealBasicVSR baseline을 temporal metric 및 수동 artifact로 비교합니다.
 4. BiM-VFI는 제한 라이선스 opt-in을 받은 연구 preset에서만 RIFE와 A/B합니다.
-5. VFI→VSR와 VSR→VFI를 비교한 뒤 기본 순서를 확정합니다.
+5. reverse receipt-resume를 구현한 뒤 `ORDER_BENCHMARK.md` 결과를 운영 기본 순서에 반영합니다.
 
 ## 현재 preflight 결과
 

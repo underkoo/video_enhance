@@ -137,4 +137,24 @@ PYTHONPATH=src .venv/bin/python scripts/enhance_video.py \
 VSR receipt가 확정된 직후 의도적으로 중단할 수 있습니다.
 
 상세 설계는 [DESIGN.md](DESIGN.md), 모델 근거는 [MODEL_SELECTION.md](MODEL_SELECTION.md)를
-참고합니다.
+참고합니다. 처리 순서 실측은 [ORDER_BENCHMARK.md](ORDER_BENCHMARK.md)에 기록합니다.
+
+연구용 reverse 순서는 다음 preset으로 실행합니다. 현재 reverse는 receipt-resume 전이므로
+전체 batch 기본값으로 사용하지 않습니다.
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/enhance_video.py \
+  --input '/mnt/d/Lewd/트위터r/input.mp4' \
+  --output '/mnt/d/Lewd/트위터r_enhanced/input_reverse.mp4' \
+  --config reverse_deterministic
+```
+
+동일 input의 두 순서 결과와 각 `.run.json`이 있으면 GT 없는 비교 지표를 생성합니다.
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/benchmark_order.py \
+  --input '/absolute/input.mp4' \
+  --forward '/mnt/d/.../forward.mp4' \
+  --reverse '/mnt/d/.../reverse.mp4' \
+  --output '/mnt/d/.../order_benchmark.json'
+```

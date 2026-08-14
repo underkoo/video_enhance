@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Self
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _FPS_PATTERN = re.compile(r"[1-9][0-9]*/[1-9][0-9]*")
 
@@ -24,6 +24,7 @@ class RunPlanManifest:
     output_path: str
     input_sha256: str
     config_sha256: str
+    order: str
     source_width: int
     source_height: int
     source_frames: int
@@ -94,6 +95,8 @@ class RunPlanManifest:
             raise ValueError("FPS values must use positive numerator/denominator strings")
         if not self.vfi_backend_id or not self.vsr_backend_id:
             raise ValueError("backend identifiers must not be empty")
+        if self.order not in {"vfi_then_vsr", "vsr_then_vfi"}:
+            raise ValueError("order must be vfi_then_vsr or vsr_then_vfi")
         if any(
             isinstance(index, bool) or not isinstance(index, int) or index < 0
             for index in self.scene_cut_after

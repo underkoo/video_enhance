@@ -28,11 +28,18 @@ class HydraConfigLoaderTest(unittest.TestCase):
                 "deterministic",
                 overrides,
             )
+            reverse_config = load_hydra_config(
+                CONFIG_DIR,
+                "reverse_deterministic",
+                overrides,
+            )
             self.assertEqual(default_config.vsr.backend_id, "flashvsr-v1.1")
             self.assertEqual(
                 deterministic_config.vsr.backend_id,
                 "mmagic-realbasicvsr",
             )
+            self.assertEqual(reverse_config.order.value, "vsr_then_vfi")
+            self.assertEqual(reverse_config.vsr.backend_id, "mmagic-realbasicvsr")
 
     def test_research_preset_is_inert_until_license_opt_in(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:

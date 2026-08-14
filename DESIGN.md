@@ -215,5 +215,8 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 - 완료: 입력/config/run-plan과 청크별 NPY receipt 기반 resume, 의도적 3청크 중단 후 077
   byte-identical 완주
 - 완료: 최종 `.run.json`의 입력/output SHA, CFR/scene/chunk plan, wall time 기록
-- 진행: 대표 클립 A/B 품질 benchmark
+- 완료: `VFI→VSR`/`VSR→VFI` research preset, 동일 timeline/color/audio 검증
+- 완료: 077 전체 영상과 059 fast-motion crop의 GT 없는 temporal/spatial A/B
+- 완료: 1920×1072→3840×2144 reverse 2-frame RTX 3090 OOM gate
+- 진행: reverse receipt-resume와 전체 batch readiness
 - 미실행: FlashVSR spatial tile 품질 검증, A/B benchmark, 전체 batch 처리

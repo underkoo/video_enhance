@@ -1,0 +1,5 @@
+defaults:
+  - deterministic
+  - _self_
+
+order: vsr_then_vfi
