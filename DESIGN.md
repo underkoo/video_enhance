@@ -65,6 +65,9 @@ probe → CFR normalization → scene-cut detection
 - 일반 구간만 VFI backend에 전달합니다.
 - cut 구간은 보간하지 않고 이전 프레임을 유지합니다.
 - 마지막 프레임 terminal hold를 추가해 오디오와 표시 시간을 보존합니다.
+- 긴 scene은 최대 64 source-frame chunk로 나누고 경계 source frame 1장을 공유합니다. 앞 chunk의
+  잘못된 terminal hold와 뒤 chunk의 중복 source frame을 ownership slice에서 제거합니다.
+- 1-frame scene은 RIFE 호출이 불가능하므로 모델을 우회하고 해당 frame을 multiplier만큼 hold합니다.
 
 ### 4.3 Video SR
 
@@ -89,7 +92,9 @@ src/rvfi_sr/
   probe.py           # ffprobe JSON parser
   config.py          # Pydantic 설정 검증
   scene_cut.py       # strict FFmpeg scdet parser 및 transition index
+  rife_chunks.py     # scene-safe RIFE overlap/output ownership
   temporal_chunks.py # scene 경계를 넘지 않는 FlashVSR chunk ownership
+  chunk_io.py        # bounded-memory atomic NPY input assembly
   pipeline.py        # 단계 orchestration/resume
   backends/
     vfi_base.py
@@ -176,7 +181,7 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 
 ## 9. 현재 상태
 
-- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 74개
+- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 81개
 - 완료: 공식 소스 기반 모델 shortlist와 라이선스/runtime 격리 정책
 - 완료: Pydantic/Hydra 제어 설정, backend protocol, RTX 3090/RIFE deterministic preflight
 - 완료: FlashVSR v1.1 고정 환경, 4개 checkpoint digest, SM 8.6 sparse CUDA kernel 수치 smoke
@@ -184,6 +189,7 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 - 완료: 고정 FFmpeg `scdet` strict parser, scene-safe 21-frame/5-context FlashVSR chunk planner
 - 완료: 30/1 CFR preflight 및 실제 6개 drift 영상의 strict drop/dup accounting
 - 완료: 077 영상 191-frame BT.709 limited RGB stream 독립 2회 byte 결정성 검증
-- 진행: model chunk assembly/encode orchestration과 고해상도 VSR 전략
+- 완료: 077 영상의 4개 overlapping RIFE NPY input을 bounded memory/atomic write로 실측 조립
+- 진행: worker output merge/encode orchestration과 고해상도 VSR 전략
 - 차단: 1280×720 이상은 현재 single-pass RTX 3090 실측 한도를 초과하므로 자동 실행 금지
 - 미실행: spatial tile 품질 검증, 전체 batch 처리

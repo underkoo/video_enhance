@@ -15,6 +15,10 @@ RTX 3090에서 실제 영상을 `FPS 보간 → Video Super Resolution` 순서�
 동일 SHA-256 `bc3d116c99578f0d5f26f8507010a1be51de2db525d9fb14ade65cc9ac77506c`를
 확인했습니다.
 
+RIFE 입력은 scene을 넘지 않으며 최대 64 source frame, 경계 1-frame overlap으로 조립합니다.
+077 영상의 CFR 191프레임은 `64/64/64/2` frame NPY 네 개로 검증했고, 중간 chunk는 WSL의
+`.runtime` 아래에만 생성합니다.
+
 ## 테스트
 
 Python 3.12 제어 환경을 만들고 테스트합니다.

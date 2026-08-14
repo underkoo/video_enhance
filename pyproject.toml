@@ -12,6 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "underkoo", email = "underkoo@gmail.com" }]
 dependencies = [
     "hydra-core==1.3.5",
+    "numpy==1.26.4",
     "pydantic==2.13.4",
 ]
 
