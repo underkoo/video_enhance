@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
 import tempfile
+import time
+from dataclasses import asdict
+from fractions import Fraction
 from pathlib import Path
 
 from rvfi_sr.cfr import probe_cfr_plan, stream_cfr_rgb24_frames
@@ -28,7 +32,20 @@ from rvfi_sr.realbasicvsr_contract import (
     RealBasicVSRResolutionContract,
     plan_realbasicvsr_chunks,
 )
+from rvfi_sr.receipts import (
+    fingerprint_text,
+    receipt_path,
+    sha256_file,
+    validate_npy_receipt,
+    write_npy_receipt,
+)
 from rvfi_sr.rife_chunks import plan_rife_chunks
+from rvfi_sr.run_manifest import (
+    RunPlanManifest,
+    validate_run_plan,
+    write_completed_run_manifest,
+    write_run_plan,
+)
 from rvfi_sr.scene_cut import detect_scene_cuts
 from rvfi_sr.timeline import TimelineContract
 from rvfi_sr.worker_protocol import WorkerRequest, WorkerResponse
@@ -41,6 +58,8 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--config", default="deterministic")
     parser.add_argument("--keep-work", action="store_true")
+    parser.add_argument("--resume-work", type=Path)
+    parser.add_argument("--checkpoint-after-vsr-chunks", type=int)
     return parser.parse_args()
 
 
@@ -78,6 +97,7 @@ def _validated_paths(arguments: argparse.Namespace, repo_root: Path) -> tuple[Pa
     if input_path == output_path:
         raise ValueError("input and output paths must differ")
     provenance_path = output_path.with_name(f"{output_path.stem}.provenance.json")
+    run_manifest_path = output_path.with_name(f"{output_path.stem}.run.json")
     occupied = tuple(
         path
         for path in (
@@ -86,6 +106,10 @@ def _validated_paths(arguments: argparse.Namespace, repo_root: Path) -> tuple[Pa
             provenance_path,
             provenance_path.with_name(
                 f"{provenance_path.stem}.partial{provenance_path.suffix}"
+            ),
+            run_manifest_path,
+            run_manifest_path.with_name(
+                f"{run_manifest_path.stem}.partial{run_manifest_path.suffix}"
             ),
         )
         if path.exists()
@@ -137,6 +161,78 @@ def _validate_worker_shape(
         )
 
 
+def _fraction_string(value: Fraction) -> str:
+    return f"{value.numerator}/{value.denominator}"
+
+
+def _artifact_fingerprint(
+    plan: RunPlanManifest,
+    *,
+    stage: str,
+    index: int,
+    chunk: object,
+) -> str:
+    payload = {
+        "plan": json.loads(plan.to_json()),
+        "stage": stage,
+        "index": index,
+        "chunk": asdict(chunk),
+    }
+    return fingerprint_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+
+
+def _validate_or_missing_artifact(
+    path: Path,
+    *,
+    producer_sha256: str,
+    expected_shape: tuple[int, int, int, int],
+) -> bool:
+    artifact_exists = path.is_file()
+    sidecar_exists = receipt_path(path).is_file()
+    if artifact_exists != sidecar_exists:
+        raise RuntimeError(
+            f"artifact/receipt completeness mismatch: artifact={path}, "
+            f"receipt={receipt_path(path)}"
+        )
+    if not artifact_exists:
+        return False
+    validate_npy_receipt(
+        path,
+        producer_sha256=producer_sha256,
+        expected_shape=expected_shape,
+    )
+    return True
+
+
+def _validate_complete_stage(
+    paths: tuple[Path, ...],
+    producers: tuple[str, ...],
+    shapes: tuple[tuple[int, int, int, int], ...],
+) -> bool:
+    if not (len(paths) == len(producers) == len(shapes)):
+        raise ValueError("stage artifact metadata counts must match")
+    states = tuple(
+        _validate_or_missing_artifact(
+            path,
+            producer_sha256=producer,
+            expected_shape=shape,
+        )
+        for path, producer, shape in zip(paths, producers, shapes, strict=True)
+    )
+    if any(states) and not all(states):
+        raise RuntimeError("input assembly stage is incomplete; partial reuse is forbidden")
+    return all(states)
+
+
+def _write_stage_receipts(paths: tuple[Path, ...], producers: tuple[str, ...]) -> None:
+    if len(paths) != len(producers):
+        raise ValueError("artifact and producer counts must match")
+    for path, producer in zip(paths, producers, strict=True):
+        write_npy_receipt(path, producer_sha256=producer)
+
+
 def _run_pipeline(
     repo_root: Path,
     input_path: Path,
@@ -144,7 +240,11 @@ def _run_pipeline(
     config: PipelineConfig,
     runtime: dict[str, Path],
     work_dir: Path,
+    *,
+    resume: bool,
+    checkpoint_after_vsr_chunks: int | None,
 ) -> Path:
+    started_at = time.perf_counter()
     if config.vfi.backend_id != "practical-rife-v4.25":
         raise ValueError("this entrypoint only supports practical-rife-v4.25")
     if config.vsr.backend_id != "mmagic-realbasicvsr":
@@ -155,6 +255,8 @@ def _run_pipeline(
         raise ValueError(f"output parent must equal configured output_dir: {config.output_dir}")
     if config.runtime.final_output_root is None:
         raise ValueError("runtime.final_output_root must be configured")
+    if checkpoint_after_vsr_chunks is not None and checkpoint_after_vsr_chunks < 1:
+        raise ValueError("checkpoint_after_vsr_chunks must be positive")
 
     spec = run_ffprobe(runtime["ffprobe"], input_path)
     if spec.audio is not None and spec.audio.codec != "aac":
@@ -195,68 +297,6 @@ def _run_pipeline(
         cut_after=scene.cut_after,
         multiplier=config.vfi.temporal_multiplier,
     )
-    rife_input_dir = work_dir / "rife-input"
-    rife_output_dir = work_dir / "rife-output"
-    rife_assembler = RifeInputAssembler(
-        rife_chunks,
-        width=spec.width,
-        height=spec.height,
-        output_dir=rife_input_dir,
-    )
-    stream_cfr_rgb24_frames(
-        runtime["ffmpeg"],
-        input_path,
-        width=spec.width,
-        height=spec.height,
-        plan=cfr_plan,
-        color=color,
-        consume_frame=rife_assembler.consume,
-    )
-    rife_input_paths = rife_assembler.finalize()
-    rife_output_dir.mkdir(parents=True, exist_ok=False)
-    rife_output_paths: list[Path | None] = []
-    worker_environment = {"PYTHONPATH": str(repo_root / "src")}
-    for index, (chunk, chunk_input) in enumerate(
-        zip(rife_chunks, rife_input_paths, strict=True)
-    ):
-        if not chunk.use_model:
-            rife_output_paths.append(None)
-            continue
-        chunk_output = rife_output_dir / f"rife-output-{index:06d}.npy"
-        request = WorkerRequest.create(
-            job_id=f"rife-{index:06d}",
-            backend_id=config.vfi.backend_id,
-            input_path=chunk_input,
-            output_path=chunk_output,
-            parameters={
-                "temporal_multiplier": config.vfi.temporal_multiplier,
-                "fp16": config.runtime.fp16,
-                "inference_scale": 1.0,
-                "gpu_index": config.runtime.gpu_index,
-            },
-        )
-        print(f"RIFE chunk {index + 1}/{len(rife_chunks)}", flush=True)
-        response = run_worker(
-            (
-                str(runtime["rife_python"]),
-                str(repo_root / "workers/practical_rife_worker.py"),
-                "--source-root",
-                str(runtime["rife_source"]),
-                "--checkpoint-root",
-                str(runtime["rife_checkpoint"]),
-            ),
-            request,
-            timeout_seconds=config.runtime.worker_timeout_seconds,
-            environment=worker_environment,
-        )
-        _validate_worker_shape(
-            response,
-            frames=chunk.worker_output_frames,
-            width=spec.width,
-            height=spec.height,
-        )
-        rife_output_paths.append(chunk_output)
-
     max_vsr_frames = RealBasicVSRResolutionContract.max_model_frames(
         width=spec.width,
         height=spec.height,
@@ -266,28 +306,192 @@ def _run_pipeline(
         cut_after=timeline.output_cut_after,
         max_source_frames=max_vsr_frames,
     )
+    run_plan = RunPlanManifest(
+        schema_version=1,
+        input_path=str(input_path),
+        output_path=str(output_path),
+        input_sha256=sha256_file(input_path),
+        config_sha256=fingerprint_text(config.model_dump_json()),
+        source_width=spec.width,
+        source_height=spec.height,
+        source_frames=spec.frame_count,
+        cfr_frames=cfr_plan.output_frames,
+        cfr_dropped_frames=cfr_plan.dropped_frames,
+        cfr_duplicated_frames=cfr_plan.duplicated_frames,
+        target_fps=_fraction_string(config.cfr.target_fps),
+        scene_cut_after=scene.cut_after,
+        vfi_backend_id=config.vfi.backend_id,
+        vfi_multiplier=config.vfi.temporal_multiplier,
+        rife_chunk_count=len(rife_chunks),
+        vsr_backend_id=config.vsr.backend_id,
+        vsr_scale=config.vsr.spatial_scale,
+        vsr_max_model_frames=max_vsr_frames,
+        vsr_chunk_count=len(vsr_chunks),
+        output_fps=_fraction_string(timeline.output_fps),
+        output_frames=timeline.output_frames,
+    )
+    work_manifest_path = work_dir / "run-plan.json"
+    if resume:
+        validate_run_plan(work_manifest_path, run_plan)
+        print(f"resume plan validated: {work_dir}", flush=True)
+    else:
+        write_run_plan(work_manifest_path, run_plan)
+
+    rife_input_dir = work_dir / "rife-input"
+    rife_output_dir = work_dir / "rife-output"
+    rife_input_paths = tuple(
+        rife_input_dir / f"rife-input-{index:06d}.npy"
+        for index in range(len(rife_chunks))
+    )
+    rife_input_producers = tuple(
+        _artifact_fingerprint(
+            run_plan,
+            stage="rife-input",
+            index=index,
+            chunk=chunk,
+        )
+        for index, chunk in enumerate(rife_chunks)
+    )
+    rife_input_shapes = tuple(
+        (chunk.source_frames, spec.height, spec.width, 3) for chunk in rife_chunks
+    )
     vsr_input_dir = work_dir / "vsr-input"
-    vsr_assembler = RealBasicVSRInputAssembler(
-        vsr_chunks,
-        width=spec.width,
-        height=spec.height,
-        output_dir=vsr_input_dir,
+    vsr_input_paths = tuple(
+        vsr_input_dir / f"realbasicvsr-input-{index:06d}.npy"
+        for index in range(len(vsr_chunks))
     )
-    stream_rife_output_frames(
-        rife_chunks,
-        rife_input_paths,
-        tuple(rife_output_paths),
-        width=spec.width,
-        height=spec.height,
-        consume_frame=vsr_assembler.consume,
+    vsr_input_producers = tuple(
+        _artifact_fingerprint(
+            run_plan,
+            stage="realbasicvsr-input",
+            index=index,
+            chunk=chunk,
+        )
+        for index, chunk in enumerate(vsr_chunks)
     )
-    vsr_input_paths = vsr_assembler.finalize()
-    shutil.rmtree(rife_input_dir)
-    shutil.rmtree(rife_output_dir)
+    vsr_input_shapes = tuple(
+        (chunk.model_frames, spec.height, spec.width, 3) for chunk in vsr_chunks
+    )
+    vsr_inputs_ready = _validate_complete_stage(
+        vsr_input_paths,
+        vsr_input_producers,
+        vsr_input_shapes,
+    )
+    worker_environment = {"PYTHONPATH": str(repo_root / "src")}
+    if vsr_inputs_ready:
+        print(f"reused {len(vsr_input_paths)} validated RealBasicVSR inputs", flush=True)
+    else:
+        rife_inputs_ready = _validate_complete_stage(
+            rife_input_paths,
+            rife_input_producers,
+            rife_input_shapes,
+        )
+        if rife_inputs_ready:
+            print(f"reused {len(rife_input_paths)} validated RIFE inputs", flush=True)
+        else:
+            rife_assembler = RifeInputAssembler(
+                rife_chunks,
+                width=spec.width,
+                height=spec.height,
+                output_dir=rife_input_dir,
+            )
+            stream_cfr_rgb24_frames(
+                runtime["ffmpeg"],
+                input_path,
+                width=spec.width,
+                height=spec.height,
+                plan=cfr_plan,
+                color=color,
+                consume_frame=rife_assembler.consume,
+            )
+            assembled_rife_inputs = rife_assembler.finalize()
+            if assembled_rife_inputs != rife_input_paths:
+                raise RuntimeError("RIFE input assembler returned unexpected paths")
+            _write_stage_receipts(rife_input_paths, rife_input_producers)
+
+        rife_output_dir.mkdir(parents=True, exist_ok=True)
+        rife_output_paths: list[Path | None] = []
+        for index, (chunk, chunk_input) in enumerate(
+            zip(rife_chunks, rife_input_paths, strict=True)
+        ):
+            if not chunk.use_model:
+                rife_output_paths.append(None)
+                continue
+            chunk_output = rife_output_dir / f"rife-output-{index:06d}.npy"
+            request = WorkerRequest.create(
+                job_id=f"rife-{index:06d}",
+                backend_id=config.vfi.backend_id,
+                input_path=chunk_input,
+                output_path=chunk_output,
+                parameters={
+                    "temporal_multiplier": config.vfi.temporal_multiplier,
+                    "fp16": config.runtime.fp16,
+                    "inference_scale": 1.0,
+                    "gpu_index": config.runtime.gpu_index,
+                },
+            )
+            producer = fingerprint_text(request.to_json())
+            expected_shape = (
+                chunk.worker_output_frames,
+                spec.height,
+                spec.width,
+                3,
+            )
+            if _validate_or_missing_artifact(
+                chunk_output,
+                producer_sha256=producer,
+                expected_shape=expected_shape,
+            ):
+                print(f"reused RIFE chunk {index + 1}/{len(rife_chunks)}", flush=True)
+            else:
+                print(f"RIFE chunk {index + 1}/{len(rife_chunks)}", flush=True)
+                response = run_worker(
+                    (
+                        str(runtime["rife_python"]),
+                        str(repo_root / "workers/practical_rife_worker.py"),
+                        "--source-root",
+                        str(runtime["rife_source"]),
+                        "--checkpoint-root",
+                        str(runtime["rife_checkpoint"]),
+                    ),
+                    request,
+                    timeout_seconds=config.runtime.worker_timeout_seconds,
+                    environment=worker_environment,
+                )
+                _validate_worker_shape(
+                    response,
+                    frames=chunk.worker_output_frames,
+                    width=spec.width,
+                    height=spec.height,
+                )
+                write_npy_receipt(chunk_output, producer_sha256=producer)
+            rife_output_paths.append(chunk_output)
+
+        vsr_assembler = RealBasicVSRInputAssembler(
+            vsr_chunks,
+            width=spec.width,
+            height=spec.height,
+            output_dir=vsr_input_dir,
+        )
+        stream_rife_output_frames(
+            rife_chunks,
+            rife_input_paths,
+            tuple(rife_output_paths),
+            width=spec.width,
+            height=spec.height,
+            consume_frame=vsr_assembler.consume,
+        )
+        assembled_vsr_inputs = vsr_assembler.finalize()
+        if assembled_vsr_inputs != vsr_input_paths:
+            raise RuntimeError("RealBasicVSR input assembler returned unexpected paths")
+        _write_stage_receipts(vsr_input_paths, vsr_input_producers)
+        shutil.rmtree(rife_input_dir)
+        shutil.rmtree(rife_output_dir)
 
     vsr_output_dir = work_dir / "vsr-output"
-    vsr_output_dir.mkdir(parents=True, exist_ok=False)
+    vsr_output_dir.mkdir(parents=True, exist_ok=True)
     vsr_output_paths: list[Path] = []
+    new_vsr_chunks = 0
     with PersistentWorker(
         (
             str(runtime["vsr_python"]),
@@ -315,14 +519,42 @@ def _run_pipeline(
                     "gpu_index": config.runtime.gpu_index,
                 },
             )
-            print(f"RealBasicVSR chunk {index + 1}/{len(vsr_chunks)}", flush=True)
-            response = vsr_worker.run(request)
-            _validate_worker_shape(
-                response,
-                frames=chunk.model_frames,
-                width=spec.width * config.vsr.spatial_scale,
-                height=spec.height * config.vsr.spatial_scale,
+            producer = fingerprint_text(request.to_json())
+            expected_shape = (
+                chunk.model_frames,
+                spec.height * config.vsr.spatial_scale,
+                spec.width * config.vsr.spatial_scale,
+                3,
             )
+            if _validate_or_missing_artifact(
+                chunk_output,
+                producer_sha256=producer,
+                expected_shape=expected_shape,
+            ):
+                print(
+                    f"reused RealBasicVSR chunk {index + 1}/{len(vsr_chunks)}",
+                    flush=True,
+                )
+            else:
+                print(f"RealBasicVSR chunk {index + 1}/{len(vsr_chunks)}", flush=True)
+                response = vsr_worker.run(request)
+                _validate_worker_shape(
+                    response,
+                    frames=chunk.model_frames,
+                    width=spec.width * config.vsr.spatial_scale,
+                    height=spec.height * config.vsr.spatial_scale,
+                )
+                write_npy_receipt(chunk_output, producer_sha256=producer)
+                new_vsr_chunks += 1
+                if (
+                    checkpoint_after_vsr_chunks is not None
+                    and new_vsr_chunks >= checkpoint_after_vsr_chunks
+                    and index + 1 < len(vsr_chunks)
+                ):
+                    raise RuntimeError(
+                        "requested checkpoint stop after completed RealBasicVSR chunks: "
+                        f"new_chunks={new_vsr_chunks}, work_dir={work_dir}"
+                    )
             vsr_output_paths.append(chunk_output)
 
     encode_contract = EncodeContract.create(
@@ -365,6 +597,13 @@ def _run_pipeline(
                 MODEL_PROVENANCE[config.vsr.backend_id],
             ),
         )
+        write_completed_run_manifest(
+            output_path.with_name(f"{output_path.stem}.run.json"),
+            plan=run_plan,
+            output_sha256=sha256_file(result),
+            output_size_bytes=result.stat().st_size,
+            elapsed_seconds=time.perf_counter() - started_at,
+        )
         return result
     finally:
         if not finalized:
@@ -384,7 +623,15 @@ def main() -> int:
     runtime = _runtime_paths(repo_root)
     jobs_root = repo_root / ".runtime/jobs"
     jobs_root.mkdir(parents=True, exist_ok=True)
-    work_dir = Path(tempfile.mkdtemp(prefix="enhance-", dir=jobs_root))
+    resume = arguments.resume_work is not None
+    if arguments.resume_work is None:
+        work_dir = Path(tempfile.mkdtemp(prefix="enhance-", dir=jobs_root))
+    else:
+        if not arguments.resume_work.is_absolute():
+            raise ValueError("--resume-work must be an absolute path")
+        work_dir = arguments.resume_work.resolve(strict=True)
+        if not work_dir.is_dir() or not work_dir.is_relative_to(jobs_root.resolve()):
+            raise ValueError(f"--resume-work must be a job directory under {jobs_root}")
     succeeded = False
     try:
         result = _run_pipeline(
@@ -394,6 +641,8 @@ def main() -> int:
             config,
             runtime,
             work_dir,
+            resume=resume,
+            checkpoint_after_vsr_chunks=arguments.checkpoint_after_vsr_chunks,
         )
         succeeded = True
         print(f"completed: {result}", flush=True)

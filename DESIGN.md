@@ -40,6 +40,8 @@ probe → CFR normalization → scene-cut detection
 10. 전체 104개 처리는 대표 클립 smoke test와 예상 시간·출력 용량 보고가 통과하기 전 실행하지 않습니다.
 11. 최종 영상 경로는 `/mnt/d` 아래만 허용하고, 모델·checkpoint·중간 smoke artifact는 WSL
     내부 `.runtime/`에 둡니다.
+12. resume는 artifact 존재만으로 허용하지 않습니다. immutable run plan과 producer/content
+    receipt가 모두 일치한 청크만 재사용합니다.
 
 ## 4. 처리 단계
 
@@ -210,5 +212,8 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 - 완료: 단일 영상 RIFE→RealBasicVSR→AAC remux end-to-end CLI와 077 영상 382-frame smoke
 - 완료: RealBasicVSR checkpoint 1회 load persistent worker, 077 영상 389초 및 기존 MP4와
   byte-identical 검증
-- 진행: run manifest 및 resume
+- 완료: 입력/config/run-plan과 청크별 NPY receipt 기반 resume, 의도적 3청크 중단 후 077
+  byte-identical 완주
+- 완료: 최종 `.run.json`의 입력/output SHA, CFR/scene/chunk plan, wall time 기록
+- 진행: 대표 클립 A/B 품질 benchmark
 - 미실행: FlashVSR spatial tile 품질 검증, A/B benchmark, 전체 batch 처리

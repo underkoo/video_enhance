@@ -47,6 +47,12 @@ RealBasicVSR worker는 JSON Lines persistent session에서 checkpoint를 한 번
 byte-identical했습니다. 청크별 terminal response와 실제 NPY digest/shape 검증은 persistent
 경로에서도 생략하지 않습니다.
 
+중단 재개는 NPY 존재 여부만 신뢰하지 않습니다. 각 artifact의 producer fingerprint,
+SHA-256, shape, dtype을 `*.receipt.json`에 atomic 기록합니다. 재개 시 입력 파일 SHA,
+resolved config SHA, CFR drop/dup, scene cut과 chunk plan을 `run-plan.json`과 먼저 비교한 뒤
+receipt가 완전히 검증된 청크만 재사용합니다. 077 영상을 VSR 3청크 직후 중단하고 재개한
+실제 smoke 결과도 정상 실행 MP4와 byte-identical했습니다.
+
 ## 테스트
 
 Python 3.12 제어 환경을 만들고 테스트합니다.
@@ -106,7 +112,8 @@ scripts/bootstrap_realbasicvsr.sh
 검증된 운영 baseline으로 단일 영상을 처리합니다. 최종 출력은 반드시 `/mnt/d` 아래의 새
 경로여야 하며, 실패 시 중간 NPY는 `.runtime/jobs/`에 보존됩니다.
 성공 시 출력과 같은 basename의 `.provenance.json`에 두 모델의 upstream commit과 checkpoint
-SHA-256을 atomic 기록합니다.
+SHA-256을 atomic 기록합니다. `.run.json`에는 입력/config SHA, CFR/scene/chunk plan,
+최종 MP4 SHA·크기·해당 실행 wall time을 기록합니다.
 
 ```bash
 PYTHONPATH=src .venv/bin/python scripts/enhance_video.py \
@@ -114,6 +121,20 @@ PYTHONPATH=src .venv/bin/python scripts/enhance_video.py \
   --output '/mnt/d/Lewd/트위터r_enhanced/input_enhanced.mp4' \
   --config deterministic
 ```
+
+실패 로그에 출력된 작업 디렉터리에서 재개할 때는 입력·출력·config를 바꾸지 않고 다음처럼
+실행합니다.
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/enhance_video.py \
+  --input '/mnt/d/Lewd/트위터r/input.mp4' \
+  --output '/mnt/d/Lewd/트위터r_enhanced/input_enhanced.mp4' \
+  --config deterministic \
+  --resume-work '/workspace/01_Codes/github/video_enhance/.runtime/jobs/enhance-xxxxxxxx'
+```
+
+재개 동작이나 제한된 청크 실행을 검증하려면 `--checkpoint-after-vsr-chunks N`으로 N개의 신규
+VSR receipt가 확정된 직후 의도적으로 중단할 수 있습니다.
 
 상세 설계는 [DESIGN.md](DESIGN.md), 모델 근거는 [MODEL_SELECTION.md](MODEL_SELECTION.md)를
 참고합니다.
