@@ -93,9 +93,11 @@ tests/
 
 모델 코드는 adapter 경계 밖에 격리합니다. 체크포인트 SHA-256, upstream commit, license, 모델 파라미터를 run manifest에 기록합니다.
 
-## 6. 모델 선정 기준
+## 6. 모델 선정
 
-외부 공식 소스 검토 후 확정합니다.
+공식 소스·라이선스·런타임 검토 결과와 선택 근거는 [MODEL_SELECTION.md](MODEL_SELECTION.md)에
+고정합니다. 기본 VFI는 Practical-RIFE v4.25, 기본 VSR 후보는 RTX 3090 preflight를 전제로 한
+FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 프로세스에서 실행합니다.
 
 ### VFI
 
@@ -162,5 +164,6 @@ tests/
 ## 9. 현재 상태
 
 - 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 17개
-- 진행 대기: 최신 VFI/VSR 공식 소스 조사 승인
-- 미실행: 패키지 설치, 체크포인트 다운로드, 실제 영상 추론, 전체 batch 처리
+- 완료: 공식 소스 기반 모델 shortlist와 라이선스/runtime 격리 정책
+- 진행: Pydantic/Hydra 제어 설정, backend protocol 및 preflight
+- 미실행: 모델별 환경 설치, 체크포인트 다운로드, 실제 영상 추론, 전체 batch 처리

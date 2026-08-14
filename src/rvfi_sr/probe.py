@@ -76,9 +76,15 @@ def _integer(mapping: Mapping[str, Any], key: str) -> int:
     value = mapping.get(key)
     if isinstance(value, bool):
         raise TypeError(f"{key} must be an integer")
+    if isinstance(value, int):
+        return value
+    if value is None:
+        raise ValueError(f"{key} must be present")
+    if not isinstance(value, str):
+        raise TypeError(f"{key} must be an integer or integer string")
     try:
         return int(value)
-    except (TypeError, ValueError) as exc:
+    except ValueError as exc:
         raise ValueError(f"{key} must be an integer") from exc
 
 

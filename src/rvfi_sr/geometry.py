@@ -23,7 +23,7 @@ class AlignedGeometry:
         height: int,
         scale: int,
         alignment: int,
-    ) -> "AlignedGeometry":
+    ) -> AlignedGeometry:
         """기하 파라미터를 검증하고 오른쪽·아래 padding 계획을 생성합니다."""
 
         for name, value in (("width", width), ("height", height)):

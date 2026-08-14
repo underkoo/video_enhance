@@ -15,7 +15,7 @@ class ArtifactContract:
     partial_path: Path
 
     @classmethod
-    def create(cls, input_path: Path, output_path: Path) -> "ArtifactContract":
+    def create(cls, input_path: Path, output_path: Path) -> ArtifactContract:
         """경로를 정규화하고 안전한 산출물 계약을 생성합니다."""
 
         if not isinstance(input_path, Path) or not isinstance(output_path, Path):

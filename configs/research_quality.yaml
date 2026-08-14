@@ -1,0 +1,11 @@
+defaults:
+  - default
+  - _self_
+
+vfi:
+  backend_id: bim-vfi
+  temporal_multiplier: 2
+
+# 연구용 사용 조건을 확인한 실행자만 CLI override로 true를 지정해야 합니다.
+runtime:
+  allow_restricted_license: false

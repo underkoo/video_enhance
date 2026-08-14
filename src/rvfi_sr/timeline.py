@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from fractions import Fraction
-from typing import Iterable
 
 
-class SceneCutPolicy(str, Enum):
+class SceneCutPolicy(StrEnum):
     """장면 전환 구간의 중간 timestamp를 채우는 정책입니다."""
 
     HOLD_PREVIOUS = "hold_previous"
 
 
-class TransitionKind(str, Enum):
+class TransitionKind(StrEnum):
     """인접 원본 프레임 사이에 적용할 작업입니다."""
 
     INTERPOLATE = "interpolate"
@@ -49,7 +49,7 @@ class TimelineContract:
         multiplier: int,
         cut_after: Iterable[int],
         scene_cut_policy: SceneCutPolicy = SceneCutPolicy.HOLD_PREVIOUS,
-    ) -> "TimelineContract":
+    ) -> TimelineContract:
         """입력을 검증하고 불변 타임라인 계약을 생성합니다."""
 
         if isinstance(input_frames, bool) or not isinstance(input_frames, int):
