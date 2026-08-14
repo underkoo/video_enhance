@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from rvfi_sr.realbasicvsr_contract import RealBasicVSRChunk
 from rvfi_sr.rife_chunks import RifeChunk
 from rvfi_sr.temporal_chunks import TemporalChunk
 
@@ -357,6 +358,129 @@ class FlashVSRInputAssembler:
         RifeInputAssembler._write_atomic(output_path, frames)
 
 
+class RealBasicVSRInputAssembler:
+    """연속 RIFE 출력을 scene-safe RealBasicVSR 입력 chunk로 조립합니다."""
+
+    def __init__(
+        self,
+        chunks: tuple[RealBasicVSRChunk, ...],
+        *,
+        width: int,
+        height: int,
+        output_dir: Path,
+    ) -> None:
+        if not chunks:
+            raise ValueError("chunks must not be empty")
+        if any(not isinstance(chunk, RealBasicVSRChunk) for chunk in chunks):
+            raise TypeError("chunks must contain only RealBasicVSRChunk values")
+        if (
+            isinstance(width, bool)
+            or not isinstance(width, int)
+            or isinstance(height, bool)
+            or not isinstance(height, int)
+        ):
+            raise TypeError("width and height must be integers")
+        if width < 1 or height < 1:
+            raise ValueError("width and height must be positive")
+        if not isinstance(output_dir, Path) or not output_dir.is_absolute():
+            raise ValueError("output_dir must be an absolute pathlib.Path")
+        resolved_output_dir = output_dir.resolve(strict=False)
+        resolved_output_dir.mkdir(parents=True, exist_ok=True)
+
+        self._chunks = chunks
+        self._width = width
+        self._height = height
+        self._frame_bytes = width * height * 3
+        self._frame_count = max(chunk.segment_stop for chunk in chunks)
+        self._output_paths = tuple(
+            resolved_output_dir / f"realbasicvsr-input-{index:06d}.npy"
+            for index in range(len(chunks))
+        )
+        for output_path in self._output_paths:
+            partial_path = output_path.with_name(
+                f"{output_path.stem}.partial{output_path.suffix}"
+            )
+            if output_path.exists() or partial_path.exists():
+                raise FileExistsError(output_path if output_path.exists() else partial_path)
+        self._starts: dict[int, list[int]] = {}
+        self._stops: dict[int, list[int]] = {}
+        for chunk_index, chunk in enumerate(chunks):
+            self._starts.setdefault(chunk.source_start, []).append(chunk_index)
+            self._stops.setdefault(chunk.source_stop - 1, []).append(chunk_index)
+        self._active: dict[int, np.ndarray[Any, np.dtype[np.uint8]]] = {}
+        self._next_frame_index = 0
+        self._finalized = False
+
+    @property
+    def output_paths(self) -> tuple[Path, ...]:
+        return self._output_paths
+
+    def consume(self, frame_index: int, frame: bytes) -> None:
+        """다음 순차 frame을 active input에 기록하고 완성 chunk를 확정합니다."""
+
+        if self._finalized:
+            raise RuntimeError("assembler is already finalized")
+        if frame_index != self._next_frame_index:
+            raise ValueError(
+                f"frame index must be sequential: expected={self._next_frame_index}, "
+                f"actual={frame_index}"
+            )
+        if not isinstance(frame, bytes):
+            raise TypeError("frame must be bytes")
+        if len(frame) != self._frame_bytes:
+            raise ValueError(
+                f"RGB24 frame byte count mismatch: expected={self._frame_bytes}, "
+                f"actual={len(frame)}"
+            )
+        for chunk_index in self._starts.get(frame_index, []):
+            chunk = self._chunks[chunk_index]
+            self._active[chunk_index] = np.empty(
+                (chunk.model_frames, self._height, self._width, 3),
+                dtype=np.uint8,
+            )
+        frame_array = np.frombuffer(frame, dtype=np.uint8).reshape(
+            self._height,
+            self._width,
+            3,
+        )
+        matching = 0
+        for chunk_index, array in self._active.items():
+            chunk = self._chunks[chunk_index]
+            if chunk.source_start <= frame_index < chunk.source_stop:
+                array[frame_index - chunk.source_start] = frame_array
+                matching += 1
+        if matching < 1:
+            raise RuntimeError(
+                f"frame {frame_index} is not owned by any RealBasicVSR input chunk"
+            )
+        for chunk_index in self._stops.get(frame_index, []):
+            array = self._active.pop(chunk_index)
+            chunk = self._chunks[chunk_index]
+            source_frames = chunk.source_stop - chunk.source_start
+            if chunk.pad_terminal:
+                array[source_frames:] = array[source_frames - 1]
+            RifeInputAssembler._write_atomic(self._output_paths[chunk_index], array)
+        self._next_frame_index += 1
+
+    def finalize(self) -> tuple[Path, ...]:
+        """전체 interpolated timeline과 모든 input artifact를 검증합니다."""
+
+        if self._finalized:
+            raise RuntimeError("assembler is already finalized")
+        if self._next_frame_index != self._frame_count:
+            raise RuntimeError(
+                f"frame stream ended early: expected={self._frame_count}, "
+                f"actual={self._next_frame_index}"
+            )
+        if self._active:
+            raise RuntimeError(f"unfinished chunks remain: {sorted(self._active)}")
+        missing = tuple(path for path in self._output_paths if not path.is_file())
+        if missing:
+            raise RuntimeError(f"chunk artifacts are missing: {missing}")
+        self._finalized = True
+        return self._output_paths
+
+
 def _validate_uint8_frames(
     frames: np.ndarray[Any, Any],
     *,
@@ -427,4 +551,63 @@ def stream_flashvsr_output_frames(
         raise RuntimeError(
             f"FlashVSR merged output count mismatch: expected={chunks[-1].output_stop}, "
             f"actual={output_index}"
+        )
+
+
+def stream_realbasicvsr_output_frames(
+    chunks: tuple[RealBasicVSRChunk, ...],
+    worker_output_paths: tuple[Path, ...],
+    *,
+    width: int,
+    height: int,
+    output_scale: int,
+    consume_frame: Callable[[int, bytes], None],
+) -> None:
+    """RealBasicVSR context/padding을 제거하고 소유 frame만 순차 방출합니다."""
+
+    if not chunks:
+        raise ValueError("chunks must not be empty")
+    if len(worker_output_paths) != len(chunks):
+        raise ValueError("chunk and worker output path counts must match")
+    if (
+        isinstance(width, bool)
+        or not isinstance(width, int)
+        or isinstance(height, bool)
+        or not isinstance(height, int)
+    ):
+        raise TypeError("width and height must be integers")
+    if width < 1 or height < 1:
+        raise ValueError("width and height must be positive")
+    if output_scale != 2:
+        raise ValueError("only measured RealBasicVSR output_scale=2 is allowed")
+    if not callable(consume_frame):
+        raise TypeError("consume_frame must be callable")
+
+    output_index = 0
+    for chunk, worker_output_path in zip(chunks, worker_output_paths, strict=True):
+        if chunk.output_start != output_index:
+            raise RuntimeError(
+                f"RealBasicVSR chunk ownership is discontinuous at output {output_index}"
+            )
+        if not isinstance(worker_output_path, Path):
+            raise TypeError("worker_output_paths must contain pathlib.Path values")
+        frames = np.load(
+            worker_output_path.resolve(strict=True),
+            mmap_mode="r",
+            allow_pickle=False,
+        )
+        _validate_uint8_frames(
+            frames,
+            expected_frames=chunk.model_frames,
+            width=width * output_scale,
+            height=height * output_scale,
+            artifact_name="RealBasicVSR worker output",
+        )
+        for local_index in range(chunk.keep_start, chunk.keep_stop):
+            consume_frame(output_index, frames[local_index].tobytes(order="C"))
+            output_index += 1
+    if output_index != chunks[-1].output_stop:
+        raise RuntimeError(
+            "RealBasicVSR merged output count mismatch: "
+            f"expected={chunks[-1].output_stop}, actual={output_index}"
         )

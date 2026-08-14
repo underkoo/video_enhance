@@ -76,8 +76,12 @@ probe → CFR normalization → scene-cut detection
   21-frame window와 5-frame left context로 다시 조립합니다.
 - FlashVSR worker output에서도 left context와 terminal padding을 제거하고 각 chunk의 전역
   ownership만 encoder에 전달합니다.
-- 24GB VRAM을 넘는 입력은 spatial tile과 temporal chunk를 함께 사용합니다.
-- tile overlap/crop은 출력 좌표계에서 자동 검증합니다.
+- RealBasicVSR 운영 baseline은 SPyNet 32-pixel padding을 포함한
+  `model_frames×padded_width×padded_height`를 RTX 3090 실측 상한 4,177,920 이하로
+  제한합니다. 1920×1072는 2-frame pair, 604×1080은 최대 6-frame 문맥을 사용합니다.
+- RealBasicVSR chunk는 scene을 넘지 않고 좌·우 context ownership을 제거합니다. 1-frame
+  scene만 동일 frame을 terminal padding해 최소 2-frame 모델 입력을 만족합니다.
+- FlashVSR 고해상도 spatial tile은 아직 seam 품질 검증 전이므로 자동 실행하지 않습니다.
 - 생성형 세부 복원 강도는 기본값에서 보수적으로 제한합니다.
 
 ### 4.4 인코딩 및 오디오
@@ -189,7 +193,7 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 
 ## 9. 현재 상태
 
-- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 92개
+- 완료: 로컬 인벤토리, 타임라인/geometry/artifact/probe 계약, 단위 테스트 106개
 - 완료: 공식 소스 기반 모델 shortlist와 라이선스/runtime 격리 정책
 - 완료: Pydantic/Hydra 제어 설정, backend protocol, RTX 3090/RIFE deterministic preflight
 - 완료: FlashVSR v1.1 고정 환경, 4개 checkpoint digest, SM 8.6 sparse CUDA kernel 수치 smoke
@@ -201,6 +205,8 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 - 완료: 077 영상 실제 RIFE 4-worker 결과를 ownership merge해 FlashVSR 입력 24개로 조립
 - 완료: FlashVSR context/padding 제거와 전역 output ownership merge 계약
 - 완료: 1208×2160/60fps/21-frame MP4 atomic encode, BT.709 VUI, AAC remux/duration 검증
-- 진행: 고해상도 VSR 전략과 전체 pipeline CLI/resume
-- 차단: 1280×720 이상은 현재 single-pass RTX 3090 실측 한도를 초과하므로 자동 실행 금지
-- 미실행: spatial tile 품질 검증, 전체 batch 처리
+- 완료: 공식 MMagic RealBasicVSR EMA checkpoint와 strict 320-tensor load 계약
+- 완료: 604×1080×3 및 1920×1072×2 RealBasicVSR 2× 실해상도/VRAM/결정성 smoke
+- 완료: 단일 영상 RIFE→RealBasicVSR→AAC remux end-to-end CLI와 077 영상 382-frame smoke
+- 진행: persistent worker protocol, run manifest 및 resume
+- 미실행: FlashVSR spatial tile 품질 검증, A/B benchmark, 전체 batch 처리

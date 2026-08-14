@@ -1,0 +1,4 @@
+# Minimal inference-only environment. The MMagic architecture is vendored as an
+# Apache-2.0-compatible worker module, so mmcv/mmengine are intentionally absent.
+numpy==1.26.4
+torch==2.6.0+cu124

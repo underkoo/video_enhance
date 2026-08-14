@@ -42,7 +42,7 @@ BACKEND_REGISTRY: dict[str, BackendCapabilities] = {
         kind=BackendKind.VSR,
         license_use=LicenseUse.PERMISSIVE,
         python_spec=">=3.9,<3.12",
-        alignment=4,
+        alignment=1,
         spatial_scales=(4,),
     ),
 }

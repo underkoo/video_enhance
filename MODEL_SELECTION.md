@@ -7,15 +7,16 @@
 
 - 기본 VFI: [Practical-RIFE v4.25](https://github.com/hzwer/Practical-RIFE)
 - 연구 품질 VFI: [BiM-VFI](https://github.com/KAIST-VICLab/BiM-VFI), 명시적 제한 라이선스 opt-in 필요
-- 기본 VSR 후보: [FlashVSR v1.1](https://github.com/OpenImagingLab/FlashVSR), RTX 3090 CUDA kernel preflight 통과 조건
-- 결정론적 VSR fallback: [MMagic RealBasicVSR](https://github.com/open-mmlab/mmagic)
+- 품질 benchmark VSR: [FlashVSR v1.1](https://github.com/OpenImagingLab/FlashVSR), RTX 3090 CUDA kernel preflight 통과 조건
+- 운영 baseline VSR: [MMagic RealBasicVSR](https://github.com/open-mmlab/mmagic)
 - 제외: [SeedVR2](https://github.com/ByteDance-Seed/SeedVR)는 공식 권장 VRAM이 24GB 단일 GPU 범위를 크게 넘습니다.
 
-`default.yaml`은 RIFE → FlashVSR를 요청합니다. FlashVSR의 block-sparse CUDA extension은
+`default.yaml`은 품질 비교용 RIFE → FlashVSR를 요청하고, 실제 단일 영상 CLI는
+`deterministic.yaml`의 RIFE → RealBasicVSR를 사용합니다. FlashVSR의 block-sparse CUDA extension은
 RTX 3090에서 compile 및 BF16 수치 smoke를 통과했습니다. 다만 single-pass 해상도는 실제로
 완주한 32-aligned 608×1088(661,504 source pixels) 이하만 허용합니다. preflight 실패 시 자동
 fallback하지 않고 실행을 실패시킵니다. 사용자가 `deterministic.yaml`을 명시했을 때만
-RealBasicVSR로 전환합니다.
+RealBasicVSR로 전환합니다. 자동 fallback은 재현성을 해치므로 허용하지 않습니다.
 
 현재 Block-Sparse-Attention upstream commit `49d6c39e4dc0303442cda3bb758b3925d4399c49`의
 device dispatch는 SM 8.x에서 SM 8.6/8.9를 명시적으로 구분합니다. 따라서 RTX 3090을 코드상
@@ -30,7 +31,7 @@ device dispatch는 SM 8.x에서 SM 8.6/8.9를 명시적으로 구분합니다. �
 | [GIMM-VFI](https://github.com/GSeanCDAT/GIMM-VFI) R-P | VFI | 연속 motion representation, 오래된 PyTorch/CuPy 격리 필요 | 비상업 조건 | 선택적 benchmark |
 | BiM-VFI | VFI | CVPR 2025, 비균일 motion의 perceptual interpolation 지향 | 연구·교육 조건 | 품질 benchmark |
 | FlashVSR v1.1 | real-world VSR | one-step streaming diffusion, native 4×, 별도 sparse CUDA kernel | Apache-2.0 | 조건부 기본 후보 |
-| RealBasicVSR | real-world VSR | 결정론적 recurrent baseline, MMagic adapter 사용 | Apache-2.0 | 명시적 fallback |
+| RealBasicVSR | real-world VSR | 결정론적 recurrent baseline, 최소 PyTorch worker | Apache-2.0 | 운영 baseline |
 | SeedVR2-3B | restoration/VSR | 공식 예시는 H100 80GB급을 전제로 함 | Apache-2.0 | RTX 3090 대상 제외 |
 
 ## 해상도 정책
@@ -85,6 +86,15 @@ FlashVSR v1.1의 네 weight는 Hugging Face revision
   `c2f5bfe971e69194c1cdaf068c03f8d90ffefbbb346db69749f767b9703b5804`
 - 실해상도 21-frame 처리 시간 약 13분, driver peak VRAM 약 24.26GB. DIT CPU offload가
   없으면 TCDecoder에서 OOM 발생하므로 worker는 `num_persistent_param_in_dit=0`을 강제합니다.
+- RealBasicVSR 604×1080×3: 최종 `(3,2160,1208,3)`, 1.76초, peak allocated 5.77GB,
+  peak reserved 7.70GB, 독립 실행 byte-identical SHA-256
+  `85e82a02c7f2701e944247855db2badab7262001551ec29bbfbae13b1e6c38be`
+- RealBasicVSR 1920×1072×2: 최종 `(2,2144,3840,3)`, 3.04초, peak allocated 17.81GB,
+  peak reserved 23.45GB, 독립 실행 byte-identical SHA-256
+  `949ed3c187bf870fed724de9f44cd2637d9570f44f453592800651b591963086`
+- 077 end-to-end: CFR 191, RIFE 382, RealBasicVSR 95 chunk, 최종 1208×2160/60fps/
+  382-frame, 22,077,970 bytes. 단, 현재 청크마다 checkpoint를 다시 읽으므로 persistent worker가
+  다음 성능 최적화 gate입니다.
 
 초기 FP16 smoke에서는 upstream `warplayer`의 cached sampling grid가 float32로 생성돼
 `grid_sample` dtype mismatch가 발생했습니다. 공식 wrapper가 global default Half tensor에 의존하는

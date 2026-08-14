@@ -8,10 +8,13 @@ import numpy as np
 
 from rvfi_sr.chunk_io import (
     FlashVSRInputAssembler,
+    RealBasicVSRInputAssembler,
     RifeInputAssembler,
     stream_flashvsr_output_frames,
+    stream_realbasicvsr_output_frames,
     stream_rife_output_frames,
 )
+from rvfi_sr.realbasicvsr_contract import plan_realbasicvsr_chunks
 from rvfi_sr.rife_chunks import plan_rife_chunks
 from rvfi_sr.temporal_chunks import plan_flashvsr_chunks
 
@@ -215,6 +218,110 @@ class FlashVSRInputAssemblerTest(unittest.TestCase):
                     (path,),
                     width=1,
                     height=1,
+                    consume_frame=lambda _index, _frame: None,
+                )
+
+
+class RealBasicVSRInputAssemblerTest(unittest.TestCase):
+    def test_pair_context_and_ownership_are_exact(self) -> None:
+        chunks = plan_realbasicvsr_chunks(
+            frame_count=5,
+            cut_after=(),
+            max_source_frames=2,
+        )
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            assembler = RealBasicVSRInputAssembler(
+                chunks,
+                width=1,
+                height=1,
+                output_dir=Path(temporary_directory) / "realbasicvsr",
+            )
+            for frame_index in range(5):
+                assembler.consume(frame_index, bytes([frame_index] * 3))
+            paths = assembler.finalize()
+            values = [
+                np.load(path, allow_pickle=False)[:, 0, 0, 0].tolist()
+                for path in paths
+            ]
+            self.assertEqual(values, [[0, 1], [1, 2], [2, 3], [3, 4]])
+
+    def test_single_frame_scene_is_terminal_padded_without_crossing_cut(self) -> None:
+        chunks = plan_realbasicvsr_chunks(
+            frame_count=3,
+            cut_after=(0,),
+            max_source_frames=4,
+        )
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            assembler = RealBasicVSRInputAssembler(
+                chunks,
+                width=1,
+                height=1,
+                output_dir=Path(temporary_directory) / "realbasicvsr",
+            )
+            for frame_index in range(3):
+                assembler.consume(frame_index, bytes([frame_index] * 3))
+            paths = assembler.finalize()
+            left = np.load(paths[0], allow_pickle=False)[:, 0, 0, 0]
+            right = np.load(paths[1], allow_pickle=False)[:, 0, 0, 0]
+            self.assertTrue(np.array_equal(left, [0, 0]))
+            self.assertTrue(np.array_equal(right, [1, 2]))
+
+    def test_worker_output_merge_removes_pair_context(self) -> None:
+        chunks = plan_realbasicvsr_chunks(
+            frame_count=5,
+            cut_after=(),
+            max_source_frames=2,
+        )
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            root = Path(temporary_directory)
+            output_paths: list[Path] = []
+            for chunk_index, chunk in enumerate(chunks):
+                path = root / f"output-{chunk_index}.npy"
+                values = np.arange(chunk.model_frames, dtype=np.uint8)
+                values += chunk.source_start
+                frames = np.repeat(values[:, None, None, None], 12, axis=3)
+                frames = frames.reshape(chunk.model_frames, 2, 2, 3)
+                np.save(path, frames, allow_pickle=False)
+                output_paths.append(path)
+            received: list[int] = []
+            stream_realbasicvsr_output_frames(
+                chunks,
+                tuple(output_paths),
+                width=1,
+                height=1,
+                output_scale=2,
+                consume_frame=lambda _index, frame: received.append(frame[0]),
+            )
+            self.assertEqual(received, list(range(5)))
+
+    def test_worker_output_dtype_and_shape_mismatch_fail_fast(self) -> None:
+        chunks = plan_realbasicvsr_chunks(
+            frame_count=2,
+            cut_after=(),
+            max_source_frames=2,
+        )
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            root = Path(temporary_directory)
+            bad_dtype = root / "bad-dtype.npy"
+            bad_shape = root / "bad-shape.npy"
+            np.save(bad_dtype, np.zeros((2, 2, 2, 3), dtype=np.float32))
+            np.save(bad_shape, np.zeros((1, 2, 2, 3), dtype=np.uint8))
+            with self.assertRaisesRegex(TypeError, "uint8"):
+                stream_realbasicvsr_output_frames(
+                    chunks,
+                    (bad_dtype,),
+                    width=1,
+                    height=1,
+                    output_scale=2,
+                    consume_frame=lambda _index, _frame: None,
+                )
+            with self.assertRaisesRegex(ValueError, "shape mismatch"):
+                stream_realbasicvsr_output_frames(
+                    chunks,
+                    (bad_shape,),
+                    width=1,
+                    height=1,
+                    output_scale=2,
                     consume_frame=lambda _index, _frame: None,
                 )
 

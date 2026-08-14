@@ -2,8 +2,9 @@
 
 RTX 3090에서 실제 영상을 `FPS 보간 → Video Super Resolution` 순서로 처리하기 위한 fail-fast 파이프라인입니다.
 
-현재는 기반 계약, 모델 선정, 격리 worker protocol과 RTX 3090 모델 runtime을 구현하는
-단계입니다. 최종 산출물은 설정 검증 단계부터 `/mnt/d` 아래로 제한합니다.
+현재는 기반 계약, 모델 선정, 격리 worker protocol, RTX 3090 모델 runtime 및 단일 영상
+end-to-end 실행 경로까지 구현했습니다. 최종 산출물은 설정 검증 단계부터 `/mnt/d` 아래로
+제한합니다.
 
 30fps 재타이밍은 고정 FFmpeg의 실제 filter summary를 먼저 검증합니다. 현재 데이터셋의
 6개 drift 영상에서 확인한 `(source → CFR, drop, duplicate)`는 각각
@@ -28,7 +29,18 @@ primaries가 모두 ffprobe 검증을 통과했습니다.
 
 동일 smoke의 AAC copy 경로도 검증했습니다. video는 0.350000초, 44.1kHz AAC는 packet
 경계상 0.371519초이며 차이 21.519ms는 AAC 1-frame(23.220ms) 이내입니다. validator는
-`max(video 1-frame, AAC 1-frame)`을 넘으면 결과를 확정하지 않습니다.
+remux된 AAC duration이 원본 AAC duration과 1 AAC-frame 이상 다르면 결과를 확정하지
+않습니다. 원본에 존재하는 video/audio duration 차이를 오디오 재인코딩으로 숨기지 않습니다.
+
+RealBasicVSR는 MMagic v1.2.0의 inference architecture와 공식 EMA checkpoint를 최소
+PyTorch worker로 격리했습니다. RTX 3090 실측 결과 604×1080×3 입력은 1.76초/peak
+reserved 7.70GB, 1920×1072×2 입력은 3.04초/23.45GB였습니다. 후자는 여유가 작으므로
+해상도별 padded frame-pixel 계약을 넘는 요청을 사전 거부합니다.
+
+077 영상의 실제 end-to-end smoke는 `191 CFR frame → 382 RIFE frame → 95 RealBasicVSR
+chunk`를 거쳐 1208×2160/60fps/382-frame MP4를 생성했습니다. 결과는 22,077,970 bytes,
+SHA-256 `a4449acb124a5b56565b1ced6a80040734f41accd9cea4c67cd49b311842f893`이며
+BT.709 limited와 원본 44.1kHz AAC duration 보존을 검증했습니다.
 
 ## 테스트
 
@@ -78,6 +90,24 @@ PYTHONPATH=src .runtime/envs/flashvsr-v1.1/bin/python scripts/smoke_flashvsr.py
 ```bash
 PYTHONPATH=src .runtime/envs/flashvsr-v1.1/bin/python \
   scripts/smoke_flashvsr_real.py --input /absolute/path/to/input.mp4 --output-scale 2
+```
+
+RealBasicVSR 고정 환경과 checkpoint를 설치하고 결정론적 smoke를 실행합니다.
+
+```bash
+scripts/bootstrap_realbasicvsr.sh
+```
+
+검증된 운영 baseline으로 단일 영상을 처리합니다. 최종 출력은 반드시 `/mnt/d` 아래의 새
+경로여야 하며, 실패 시 중간 NPY는 `.runtime/jobs/`에 보존됩니다.
+성공 시 출력과 같은 basename의 `.provenance.json`에 두 모델의 upstream commit과 checkpoint
+SHA-256을 atomic 기록합니다.
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/enhance_video.py \
+  --input '/mnt/d/Lewd/트위터r/input.mp4' \
+  --output '/mnt/d/Lewd/트위터r_enhanced/input_enhanced.mp4' \
+  --config deterministic
 ```
 
 상세 설계는 [DESIGN.md](DESIGN.md), 모델 근거는 [MODEL_SELECTION.md](MODEL_SELECTION.md)를

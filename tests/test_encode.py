@@ -51,6 +51,7 @@ class EncodeContractTest(unittest.TestCase):
                 fps=Fraction(30, 1),
                 frame_count=2,
                 expect_audio=True,
+                source_audio_duration=Fraction(66667, 1_000_000),
             )
             command = contract.ffmpeg_command(ffmpeg_path)
             self.assertIn("libx264", command)
@@ -89,7 +90,7 @@ class EncodeContractTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "color metadata"):
                 contract.validate_output(parse_ffprobe_payload(payload))
 
-    def test_audio_duration_must_match_within_one_video_or_aac_frame(self) -> None:
+    def test_remuxed_audio_duration_must_match_source_within_one_aac_frame(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
             root = Path(temporary_directory)
             input_path = root / "input.mp4"
@@ -103,6 +104,7 @@ class EncodeContractTest(unittest.TestCase):
                 fps=Fraction(30, 1),
                 frame_count=2,
                 expect_audio=True,
+                source_audio_duration=Fraction(66667, 1_000_000),
             )
             contract.validate_output(parse_ffprobe_payload(encoded_payload(audio=True)))
             payload = encoded_payload(audio=True)
@@ -112,6 +114,23 @@ class EncodeContractTest(unittest.TestCase):
             payload["streams"][1]["duration"] = "0.200000"
             with self.assertRaisesRegex(ValueError, "audio duration"):
                 contract.validate_output(parse_ffprobe_payload(payload))
+
+    def test_audio_expectation_requires_source_duration(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            root = Path(temporary_directory)
+            input_path = root / "input.mp4"
+            input_path.touch()
+            with self.assertRaisesRegex(ValueError, "source_audio_duration"):
+                EncodeContract.create(
+                    input_path=input_path,
+                    output_path=root / "output.mp4",
+                    final_output_root=root,
+                    width=2,
+                    height=2,
+                    fps=Fraction(30, 1),
+                    frame_count=2,
+                    expect_audio=True,
+                )
 
     def test_output_must_be_under_root_and_use_even_geometry(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:

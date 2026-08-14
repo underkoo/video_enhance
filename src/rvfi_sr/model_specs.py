@@ -65,5 +65,26 @@ MODEL_PROVENANCE: Mapping[str, ModelProvenance] = MappingProxyType(
                 ),
             ),
         ),
+        "mmagic-realbasicvsr": ModelProvenance(
+            backend_id="mmagic-realbasicvsr",
+            upstream_url="https://github.com/open-mmlab/mmagic",
+            upstream_commit="c749dcc7172d198ac2a27c3e5a4d2181640f0fd5",
+            license_name="Apache-2.0",
+            checkpoints=(
+                CheckpointArtifact(
+                    filename="RealBasicVSR.pth",
+                    url=(
+                        "https://download.openmmlab.com/mmediting/restorers/"
+                        "real_basicvsr/"
+                        "realbasicvsr_c64b20_1x30x8_lr5e-5_150k_reds_"
+                        "20211104-52f77c2c.pth"
+                    ),
+                    sha256=(
+                        "52f77c2c835aaa3fe675b3959b2f85010a6c6f63f77f7e279394646e55a4e376"
+                    ),
+                    size_bytes=148_239_017,
+                ),
+            ),
+        ),
     }
 )

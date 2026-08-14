@@ -26,6 +26,7 @@ class EncodeContract:
     fps: Fraction
     frame_count: int
     expect_audio: bool
+    source_audio_duration: Fraction | None
     crf: int
     preset: str
 
@@ -41,6 +42,7 @@ class EncodeContract:
         fps: Fraction,
         frame_count: int,
         expect_audio: bool,
+        source_audio_duration: Fraction | None = None,
         crf: int = 16,
         preset: str = "slow",
     ) -> Self:
@@ -80,6 +82,16 @@ class EncodeContract:
             raise ValueError("frame_count must be positive")
         if not isinstance(expect_audio, bool):
             raise TypeError("expect_audio must be boolean")
+        if expect_audio:
+            if (
+                not isinstance(source_audio_duration, Fraction)
+                or source_audio_duration <= 0
+            ):
+                raise ValueError(
+                    "source_audio_duration must be a positive Fraction when audio is expected"
+                )
+        elif source_audio_duration is not None:
+            raise ValueError("source_audio_duration must be None when audio is not expected")
         if isinstance(crf, bool) or not isinstance(crf, int) or not 0 <= crf <= 51:
             raise ValueError("crf must be an integer in [0, 51]")
         if preset not in {"medium", "slow", "slower"}:
@@ -92,6 +104,7 @@ class EncodeContract:
             fps=fps,
             frame_count=frame_count,
             expect_audio=expect_audio,
+            source_audio_duration=source_audio_duration,
             crf=crf,
             preset=preset,
         )
@@ -149,10 +162,12 @@ class EncodeContract:
         if spec.audio is not None:
             if spec.audio.codec != "aac":
                 raise ValueError(f"output audio codec must be aac, got {spec.audio.codec!r}")
-            audio_tolerance = max(tolerance, Fraction(1024, spec.audio.sample_rate))
-            if abs(spec.audio.duration - self.expected_duration) > audio_tolerance:
+            assert self.source_audio_duration is not None
+            audio_tolerance = Fraction(1024, spec.audio.sample_rate)
+            if abs(spec.audio.duration - self.source_audio_duration) > audio_tolerance:
                 raise ValueError(
-                    f"output audio duration mismatch: expected={self.expected_duration}, "
+                    "remuxed audio duration mismatch: "
+                    f"expected_source={self.source_audio_duration}, "
                     f"actual={spec.audio.duration}, tolerance={audio_tolerance}"
                 )
 
