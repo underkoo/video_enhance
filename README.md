@@ -19,6 +19,9 @@ RIFE 입력은 scene을 넘지 않으며 최대 64 source frame, 경계 1-frame 
 077 영상의 CFR 191프레임은 `64/64/64/2` frame NPY 네 개로 검증했고, 중간 chunk는 WSL의
 `.runtime` 아래에만 생성합니다.
 
+077 실제 영상 결합 smoke에서는 RIFE worker 네 개가 29.66초 내 완료·병합됐고, 382-frame
+보간 timeline을 FlashVSR 21-frame 입력 24개로 gap/overlap 없이 재조립했습니다.
+
 ## 테스트
 
 Python 3.12 제어 환경을 만들고 테스트합니다.
