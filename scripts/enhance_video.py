@@ -32,7 +32,7 @@ from rvfi_sr.rife_chunks import plan_rife_chunks
 from rvfi_sr.scene_cut import detect_scene_cuts
 from rvfi_sr.timeline import TimelineContract
 from rvfi_sr.worker_protocol import WorkerRequest, WorkerResponse
-from rvfi_sr.worker_runner import run_worker
+from rvfi_sr.worker_runner import PersistentWorker, run_worker
 
 
 def _arguments() -> argparse.Namespace:
@@ -288,41 +288,42 @@ def _run_pipeline(
     vsr_output_dir = work_dir / "vsr-output"
     vsr_output_dir.mkdir(parents=True, exist_ok=False)
     vsr_output_paths: list[Path] = []
-    for index, (chunk, chunk_input) in enumerate(
-        zip(vsr_chunks, vsr_input_paths, strict=True)
-    ):
-        chunk_output = vsr_output_dir / f"vsr-output-{index:06d}.npy"
-        request = WorkerRequest.create(
-            job_id=f"realbasicvsr-{index:06d}",
-            backend_id=config.vsr.backend_id,
-            input_path=chunk_input,
-            output_path=chunk_output,
-            parameters={
-                "native_scale": 4,
-                "output_scale": config.vsr.spatial_scale,
-                "fp16": config.runtime.fp16,
-                "gpu_index": config.runtime.gpu_index,
-            },
-        )
-        print(f"RealBasicVSR chunk {index + 1}/{len(vsr_chunks)}", flush=True)
-        response = run_worker(
-            (
-                str(runtime["vsr_python"]),
-                str(repo_root / "workers/realbasicvsr_worker.py"),
-                "--checkpoint",
-                str(runtime["vsr_checkpoint"]),
-            ),
-            request,
-            timeout_seconds=config.runtime.worker_timeout_seconds,
-            environment=worker_environment,
-        )
-        _validate_worker_shape(
-            response,
-            frames=chunk.model_frames,
-            width=spec.width * config.vsr.spatial_scale,
-            height=spec.height * config.vsr.spatial_scale,
-        )
-        vsr_output_paths.append(chunk_output)
+    with PersistentWorker(
+        (
+            str(runtime["vsr_python"]),
+            str(repo_root / "workers/realbasicvsr_worker.py"),
+            "--checkpoint",
+            str(runtime["vsr_checkpoint"]),
+            "--persistent",
+        ),
+        timeout_seconds=config.runtime.worker_timeout_seconds,
+        environment=worker_environment,
+    ) as vsr_worker:
+        for index, (chunk, chunk_input) in enumerate(
+            zip(vsr_chunks, vsr_input_paths, strict=True)
+        ):
+            chunk_output = vsr_output_dir / f"vsr-output-{index:06d}.npy"
+            request = WorkerRequest.create(
+                job_id=f"realbasicvsr-{index:06d}",
+                backend_id=config.vsr.backend_id,
+                input_path=chunk_input,
+                output_path=chunk_output,
+                parameters={
+                    "native_scale": 4,
+                    "output_scale": config.vsr.spatial_scale,
+                    "fp16": config.runtime.fp16,
+                    "gpu_index": config.runtime.gpu_index,
+                },
+            )
+            print(f"RealBasicVSR chunk {index + 1}/{len(vsr_chunks)}", flush=True)
+            response = vsr_worker.run(request)
+            _validate_worker_shape(
+                response,
+                frames=chunk.model_frames,
+                width=spec.width * config.vsr.spatial_scale,
+                height=spec.height * config.vsr.spatial_scale,
+            )
+            vsr_output_paths.append(chunk_output)
 
     encode_contract = EncodeContract.create(
         input_path=input_path,

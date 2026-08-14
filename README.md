@@ -42,6 +42,11 @@ chunk`를 거쳐 1208×2160/60fps/382-frame MP4를 생성했습니다. 결과는
 SHA-256 `a4449acb124a5b56565b1ced6a80040734f41accd9cea4c67cd49b311842f893`이며
 BT.709 limited와 원본 44.1kHz AAC duration 보존을 검증했습니다.
 
+RealBasicVSR worker는 JSON Lines persistent session에서 checkpoint를 한 번만 적재합니다.
+동일 077 end-to-end 실행은 389초에 완료됐고, 기존 청크별 프로세스 결과와 MP4 전체가
+byte-identical했습니다. 청크별 terminal response와 실제 NPY digest/shape 검증은 persistent
+경로에서도 생략하지 않습니다.
+
 ## 테스트
 
 Python 3.12 제어 환경을 만들고 테스트합니다.

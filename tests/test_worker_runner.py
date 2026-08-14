@@ -7,13 +7,13 @@ import unittest
 from pathlib import Path
 
 from rvfi_sr.worker_protocol import WorkerRequest
-from rvfi_sr.worker_runner import run_worker
+from rvfi_sr.worker_runner import PersistentWorker, run_worker
 
 
 class WorkerRunnerTest(unittest.TestCase):
     def _request(self, root: Path, *, job_id: str = "job-1") -> WorkerRequest:
         input_path = root / "input.npy"
-        output_path = root / "output.npy"
+        output_path = root / f"{job_id}-output.npy"
         input_path.write_bytes(b"input")
         return WorkerRequest.create(
             job_id=job_id,
@@ -84,3 +84,87 @@ class WorkerRunnerTest(unittest.TestCase):
                     request,
                     timeout_seconds=60,
                 )
+
+    def test_persistent_worker_handles_multiple_requests_in_one_process(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            root = Path(temporary_directory)
+            first = self._request(root, job_id="job-1")
+            second = self._request(root, job_id="job-2")
+            script = """
+import hashlib
+import json
+import pathlib
+import sys
+
+for line in sys.stdin:
+    request = json.loads(line)
+    output = request["job_id"].encode("utf-8")
+    pathlib.Path(request["output_path"]).write_bytes(output)
+    response = {
+        "schema_version": 1,
+        "job_id": request["job_id"],
+        "status": "succeeded",
+        "output_sha256": hashlib.sha256(output).hexdigest(),
+        "frame_count": 1,
+        "width": 1,
+        "height": 1,
+        "dtype": "uint8",
+        "error_type": None,
+        "error_message": None,
+    }
+    print(json.dumps(response, sort_keys=True, separators=(",", ":")), flush=True)
+"""
+            with PersistentWorker(
+                (sys.executable, "-c", script),
+                timeout_seconds=60,
+            ) as worker:
+                first_response = worker.run(first)
+                second_response = worker.run(second)
+            self.assertEqual(first_response.job_id, "job-1")
+            self.assertEqual(second_response.job_id, "job-2")
+            self.assertEqual(Path(first.output_path).read_bytes(), b"job-1")
+            self.assertEqual(Path(second.output_path).read_bytes(), b"job-2")
+
+    def test_persistent_worker_rejects_calls_after_close(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            request = self._request(Path(temporary_directory))
+            worker = PersistentWorker(
+                (sys.executable, "-c", "import sys; list(sys.stdin)"),
+                timeout_seconds=60,
+            )
+            worker.close()
+            with self.assertRaisesRegex(RuntimeError, "already closed"):
+                worker.run(request)
+
+    def test_persistent_worker_surfaces_failed_response_and_reaps_process(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary_directory:
+            request = self._request(Path(temporary_directory))
+            script = """
+import json
+import sys
+
+request = json.loads(sys.stdin.readline())
+response = {
+    "schema_version": 1,
+    "job_id": request["job_id"],
+    "status": "failed",
+    "output_sha256": None,
+    "frame_count": None,
+    "width": None,
+    "height": None,
+    "dtype": None,
+    "error_type": "RuntimeError",
+    "error_message": "synthetic failure",
+}
+print(json.dumps(response), flush=True)
+raise SystemExit(1)
+"""
+            worker = PersistentWorker(
+                (sys.executable, "-c", script),
+                timeout_seconds=60,
+            )
+            try:
+                with self.assertRaisesRegex(RuntimeError, "synthetic failure"):
+                    worker.run(request)
+            finally:
+                worker.close(check_exit=False)

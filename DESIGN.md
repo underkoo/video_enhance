@@ -208,5 +208,7 @@ FlashVSR v1.1입니다. 모든 모델은 Python 3.12 제어 계층과 분리된 
 - 완료: 공식 MMagic RealBasicVSR EMA checkpoint와 strict 320-tensor load 계약
 - 완료: 604×1080×3 및 1920×1072×2 RealBasicVSR 2× 실해상도/VRAM/결정성 smoke
 - 완료: 단일 영상 RIFE→RealBasicVSR→AAC remux end-to-end CLI와 077 영상 382-frame smoke
-- 진행: persistent worker protocol, run manifest 및 resume
+- 완료: RealBasicVSR checkpoint 1회 load persistent worker, 077 영상 389초 및 기존 MP4와
+  byte-identical 검증
+- 진행: run manifest 및 resume
 - 미실행: FlashVSR spatial tile 품질 검증, A/B benchmark, 전체 batch 처리

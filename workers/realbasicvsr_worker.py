@@ -31,6 +31,7 @@ _ALLOWED_PARAMETERS = frozenset({"native_scale", "output_scale", "fp16", "gpu_in
 def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True, type=Path)
+    parser.add_argument("--persistent", action="store_true")
     return parser.parse_args()
 
 
@@ -163,91 +164,141 @@ def _write_atomic(output_path: Path, frames: np.ndarray[Any, Any]) -> Path:
     return output_path
 
 
-def _run(request: WorkerRequest, checkpoint: Path) -> WorkerResponse:
-    if request.backend_id != _BACKEND_ID:
-        raise ValueError(
-            f"backend_id mismatch: expected={_BACKEND_ID!r}, actual={request.backend_id!r}"
+class RealBasicVSRWorker:
+    """checkpoint를 한 번만 검증·적재하고 동형 요청을 순차 처리합니다."""
+
+    def __init__(self, checkpoint: Path) -> None:
+        self._checkpoint = checkpoint
+        self._model: RealBasicVSRNet | None = None
+        self._device: torch.device | None = None
+        self._fp16: bool | None = None
+        self._gpu_index: int | None = None
+
+    def _initialize(self, *, fp16: bool, gpu_index: int) -> None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for the RealBasicVSR worker")
+        if gpu_index >= torch.cuda.device_count():
+            raise RuntimeError(
+                f"gpu_index out of range: index={gpu_index}, count={torch.cuda.device_count()}"
+            )
+        torch.cuda.set_device(gpu_index)
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        device = torch.device("cuda", gpu_index)
+        self._model = _load_model(self._checkpoint, device, fp16)
+        self._device = device
+        self._fp16 = fp16
+        self._gpu_index = gpu_index
+
+    def run(self, request: WorkerRequest) -> WorkerResponse:
+        """고정 precision/GPU session에서 요청 한 건을 처리합니다."""
+
+        if request.backend_id != _BACKEND_ID:
+            raise ValueError(
+                f"backend_id mismatch: expected={_BACKEND_ID!r}, "
+                f"actual={request.backend_id!r}"
+            )
+        output_scale, fp16, gpu_index = _validate_parameters(request)
+        frames = _load_input(Path(request.input_path))
+        RealBasicVSRResolutionContract.create(
+            width=frames.shape[2],
+            height=frames.shape[1],
+            model_frames=frames.shape[0],
+            output_scale=output_scale,
         )
-    output_scale, fp16, gpu_index = _validate_parameters(request)
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required for the RealBasicVSR worker")
-    if gpu_index >= torch.cuda.device_count():
-        raise RuntimeError(
-            f"gpu_index out of range: index={gpu_index}, count={torch.cuda.device_count()}"
+        if self._model is None:
+            self._initialize(fp16=fp16, gpu_index=gpu_index)
+        elif (fp16, gpu_index) != (self._fp16, self._gpu_index):
+            raise ValueError(
+                "persistent worker precision/GPU parameters must remain constant: "
+                f"expected={(self._fp16, self._gpu_index)}, "
+                f"actual={(fp16, gpu_index)}"
+            )
+        assert self._model is not None
+        assert self._device is not None
+        torch.cuda.reset_peak_memory_stats(self._device)
+        started_at = time.perf_counter()
+        output_frames = _infer(
+            frames,
+            self._model,
+            device=self._device,
+            fp16=fp16,
+            output_scale=output_scale,
         )
-    torch.cuda.set_device(gpu_index)
-    torch.use_deterministic_algorithms(True)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
-    device = torch.device("cuda", gpu_index)
-    frames = _load_input(Path(request.input_path))
-    RealBasicVSRResolutionContract.create(
-        width=frames.shape[2],
-        height=frames.shape[1],
-        model_frames=frames.shape[0],
-        output_scale=output_scale,
-    )
-    model = _load_model(checkpoint, device, fp16)
-    torch.cuda.reset_peak_memory_stats(device)
-    started_at = time.perf_counter()
-    output_frames = _infer(
-        frames,
-        model,
-        device=device,
-        fp16=fp16,
-        output_scale=output_scale,
-    )
-    elapsed_seconds = time.perf_counter() - started_at
-    print(
-        "RealBasicVSR inference metrics:",
-        f"frames={frames.shape[0]}",
-        f"source={frames.shape[2]}x{frames.shape[1]}",
-        f"output_scale={output_scale}",
-        f"elapsed_seconds={elapsed_seconds:.6f}",
-        f"peak_allocated_bytes={torch.cuda.max_memory_allocated(device)}",
-        f"peak_reserved_bytes={torch.cuda.max_memory_reserved(device)}",
-        file=sys.stderr,
-        flush=True,
-    )
-    output_path = _write_atomic(Path(request.output_path), output_frames)
-    return WorkerResponse(
-        schema_version=_PROTOCOL_VERSION,
-        job_id=request.job_id,
-        status=WorkerStatus.SUCCEEDED,
-        output_sha256=_sha256(output_path),
-        frame_count=output_frames.shape[0],
-        width=output_frames.shape[2],
-        height=output_frames.shape[1],
-        dtype=str(output_frames.dtype),
-    )
+        elapsed_seconds = time.perf_counter() - started_at
+        print(
+            "RealBasicVSR inference metrics:",
+            f"job_id={request.job_id}",
+            f"frames={frames.shape[0]}",
+            f"source={frames.shape[2]}x{frames.shape[1]}",
+            f"output_scale={output_scale}",
+            f"elapsed_seconds={elapsed_seconds:.6f}",
+            f"peak_allocated_bytes={torch.cuda.max_memory_allocated(self._device)}",
+            f"peak_reserved_bytes={torch.cuda.max_memory_reserved(self._device)}",
+            file=sys.stderr,
+            flush=True,
+        )
+        output_path = _write_atomic(Path(request.output_path), output_frames)
+        return WorkerResponse(
+            schema_version=_PROTOCOL_VERSION,
+            job_id=request.job_id,
+            status=WorkerStatus.SUCCEEDED,
+            output_sha256=_sha256(output_path),
+            frame_count=output_frames.shape[0],
+            width=output_frames.shape[2],
+            height=output_frames.shape[1],
+            dtype=str(output_frames.dtype),
+        )
+
+
+def _process_request(
+    worker: RealBasicVSRWorker,
+    request: WorkerRequest,
+) -> tuple[WorkerResponse, bool]:
+    try:
+        return worker.run(request), True
+    except Exception as error:
+        traceback.print_exc(file=sys.stderr)
+        return (
+            WorkerResponse(
+                schema_version=_PROTOCOL_VERSION,
+                job_id=request.job_id,
+                status=WorkerStatus.FAILED,
+                output_sha256=None,
+                frame_count=None,
+                width=None,
+                height=None,
+                dtype=None,
+                error_type=type(error).__name__,
+                error_message=str(error),
+            ),
+            False,
+        )
 
 
 def main() -> int:
-    """stdin 요청 하나를 처리하고 stdout에 terminal 응답 하나만 씁니다."""
+    """단일 JSON 또는 persistent JSON Lines 요청을 순차 처리합니다."""
 
     arguments = _parse_arguments()
+    worker = RealBasicVSRWorker(arguments.checkpoint)
+    if arguments.persistent:
+        for line in sys.stdin:
+            if not line.strip():
+                raise ValueError("persistent worker requests must not contain blank lines")
+            request = WorkerRequest.from_json(line)
+            response, succeeded = _process_request(worker, request)
+            print(response.to_json(), flush=True)
+            if not succeeded:
+                return 1
+        return 0
     request = WorkerRequest.from_json(sys.stdin.read())
-    try:
-        response = _run(request, arguments.checkpoint)
-    except Exception as error:
-        traceback.print_exc(file=sys.stderr)
-        response = WorkerResponse(
-            schema_version=_PROTOCOL_VERSION,
-            job_id=request.job_id,
-            status=WorkerStatus.FAILED,
-            output_sha256=None,
-            frame_count=None,
-            width=None,
-            height=None,
-            dtype=None,
-            error_type=type(error).__name__,
-            error_message=str(error),
-        )
-        print(response.to_json(), flush=True)
-        return 1
+    response, succeeded = _process_request(worker, request)
     print(response.to_json(), flush=True)
+    if not succeeded:
+        return 1
     return 0
 
 

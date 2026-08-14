@@ -93,8 +93,8 @@ FlashVSR v1.1의 네 weight는 Hugging Face revision
   peak reserved 23.45GB, 독립 실행 byte-identical SHA-256
   `949ed3c187bf870fed724de9f44cd2637d9570f44f453592800651b591963086`
 - 077 end-to-end: CFR 191, RIFE 382, RealBasicVSR 95 chunk, 최종 1208×2160/60fps/
-  382-frame, 22,077,970 bytes. 단, 현재 청크마다 checkpoint를 다시 읽으므로 persistent worker가
-  다음 성능 최적화 gate입니다.
+  382-frame, 22,077,970 bytes. checkpoint를 한 번만 적재하는 persistent worker 경로는
+  389초에 완료됐으며 청크별 프로세스 결과와 최종 MP4가 byte-identical입니다.
 
 초기 FP16 smoke에서는 upstream `warplayer`의 cached sampling grid가 float32로 생성돼
 `grid_sample` dtype mismatch가 발생했습니다. 공식 wrapper가 global default Half tensor에 의존하는
