@@ -42,6 +42,8 @@ class PipelineConfigTest(unittest.TestCase):
             self.assertEqual(config.vsr.spatial_scale, 2)
             self.assertTrue(config.vsr.post_downsample)
             self.assertEqual(config.cfr.target_fps, Fraction(30, 1))
+            self.assertEqual(config.color.untagged_range, "tv")
+            self.assertEqual(config.color.untagged_space, "bt709")
             self.assertEqual(config.scene_cut.threshold, 27.0)
 
     def test_scene_cut_threshold_must_be_in_valid_range(self) -> None:

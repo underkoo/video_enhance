@@ -5,6 +5,11 @@ order: vfi_then_vsr
 cfr:
   target_fps: '30/1'
 
+color:
+  # 현재 104개 파일 모두 color tag가 없으므로 추정을 금지하고 HD 관례를 명시합니다.
+  untagged_range: tv
+  untagged_space: bt709
+
 vfi:
   backend_id: practical-rife-v4.25
   temporal_multiplier: 2

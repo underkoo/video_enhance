@@ -10,6 +10,7 @@ from typing import Annotated, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from rvfi_sr.backends import BackendRequest
+from rvfi_sr.color import VideoColorRange, VideoColorSpace
 from rvfi_sr.registry import get_backend_capabilities
 
 
@@ -53,6 +54,13 @@ class CfrConfig(StrictConfigModel):
     target_fps: Annotated[Fraction, Field(gt=0)] = Fraction(30, 1)
 
 
+class ColorConfig(StrictConfigModel):
+    """color tag가 없는 입력에만 적용할 명시적 decode 가정입니다."""
+
+    untagged_range: VideoColorRange = VideoColorRange.TV
+    untagged_space: VideoColorSpace = VideoColorSpace.BT709
+
+
 class RuntimeConfig(StrictConfigModel):
     """GPU와 라이선스 실행 정책입니다."""
 
@@ -83,6 +91,7 @@ class PipelineConfig(StrictConfigModel):
     vfi: VFIConfig
     vsr: VSRConfig
     cfr: CfrConfig = CfrConfig()
+    color: ColorConfig = ColorConfig()
     scene_cut: SceneCutConfig = SceneCutConfig()
     runtime: RuntimeConfig = RuntimeConfig()
 

@@ -5,9 +5,14 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
+from typing import BinaryIO, cast
+
+from rvfi_sr.color import RgbDecodeContract
 
 _FPS_SUMMARY_PATTERN = re.compile(
     r"(?P<input>\d+) frames in, (?P<output>\d+) frames out; "
@@ -161,3 +166,119 @@ def probe_cfr_plan(
         expected_source_frames=expected_source_frames,
         target_fps=target_fps,
     )
+
+
+def _read_exact(stream: BinaryIO, size: int) -> bytes:
+    payload = bytearray()
+    while len(payload) < size:
+        chunk = stream.read(size - len(payload))
+        if not chunk:
+            break
+        payload.extend(chunk)
+    return bytes(payload)
+
+
+def stream_cfr_rgb24_frames(
+    ffmpeg_path: Path,
+    input_path: Path,
+    *,
+    width: int,
+    height: int,
+    plan: CfrPlan,
+    color: RgbDecodeContract,
+    consume_frame: Callable[[int, bytes], None],
+) -> None:
+    """검증된 CFR plan과 정확히 같은 수의 RGB24 frame을 callback으로 전달합니다."""
+
+    if not isinstance(ffmpeg_path, Path) or not isinstance(input_path, Path):
+        raise TypeError("ffmpeg_path and input_path must be pathlib.Path")
+    executable = ffmpeg_path.resolve(strict=True)
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise PermissionError(f"ffmpeg_path must be executable: {executable}")
+    resolved_input = input_path.resolve(strict=True)
+    if not resolved_input.is_file() or resolved_input.suffix.casefold() != ".mp4":
+        raise ValueError("input_path must be an existing MP4 file")
+    if (
+        isinstance(width, bool)
+        or not isinstance(width, int)
+        or isinstance(height, bool)
+        or not isinstance(height, int)
+    ):
+        raise TypeError("width and height must be integers")
+    if width < 1 or height < 1:
+        raise ValueError("width and height must be positive")
+    if not isinstance(plan, CfrPlan):
+        raise TypeError("plan must be CfrPlan")
+    if not isinstance(color, RgbDecodeContract):
+        raise TypeError("color must be RgbDecodeContract")
+    if not callable(consume_frame):
+        raise TypeError("consume_frame must be callable")
+
+    filter_expression = f"{cfr_filter_expression(plan.target_fps)},{color.ffmpeg_filter}"
+    command = (
+        str(executable),
+        "-v",
+        "error",
+        "-nostdin",
+        "-i",
+        str(resolved_input),
+        "-map",
+        "0:v:0",
+        "-an",
+        "-sn",
+        "-dn",
+        "-vf",
+        filter_expression,
+        "-fps_mode",
+        "passthrough",
+        "-pix_fmt",
+        "rgb24",
+        "-f",
+        "rawvideo",
+        "pipe:1",
+    )
+    frame_bytes = width * height * 3
+    with tempfile.TemporaryFile(mode="w+b") as error_stream:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error_stream)
+        if process.stdout is None:
+            process.kill()
+            process.wait()
+            raise RuntimeError("FFmpeg stdout pipe was not created")
+        stdout = cast(BinaryIO, process.stdout)
+        completed = False
+        try:
+            for frame_index in range(plan.output_frames):
+                frame = _read_exact(stdout, frame_bytes)
+                if len(frame) != frame_bytes:
+                    return_code = process.wait(timeout=30)
+                    error_stream.seek(0)
+                    diagnostic = error_stream.read().decode("utf-8", errors="replace").strip()
+                    raise RuntimeError(
+                        "FFmpeg RGB stream ended early: "
+                        f"frame={frame_index}, bytes={len(frame)}/{frame_bytes}, "
+                        f"returncode={return_code}, stderr={diagnostic}"
+                    )
+                consume_frame(frame_index, frame)
+            if stdout.read(1):
+                raise RuntimeError(
+                    f"FFmpeg RGB stream exceeded expected {plan.output_frames} frames"
+                )
+            return_code = process.wait(timeout=30)
+            error_stream.seek(0)
+            diagnostic = error_stream.read().decode("utf-8", errors="replace").strip()
+            if return_code != 0:
+                raise RuntimeError(
+                    f"FFmpeg RGB decode failed: returncode={return_code}, stderr={diagnostic}"
+                )
+            if diagnostic:
+                raise RuntimeError(f"FFmpeg emitted an error-level diagnostic: {diagnostic}")
+            completed = True
+        finally:
+            stdout.close()
+            if not completed and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
